@@ -12,7 +12,8 @@ export interface GhostAiVoiceSettings {
 }
 
 export interface GhostAiTtsItem {
-  id: string; // stable narration id
+  id: string; // stable narration id (canonical)
+  narrationId?: string; // fallback alias supported from Flow/GhostAI
   sceneId: string; // GhostAI scene id
   sceneIndex: number;
   text: string;

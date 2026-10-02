@@ -65,6 +65,7 @@ export async function buildGhostAiTtsPackage(options: BuildZipOptions): Promise<
       responseBytes,
       duration,
       requestId,
+      narrationId,
       ...originalProps
     } = item;
 

@@ -79,29 +79,35 @@ export function parseGhostAiTtsJson(input: string | unknown): ParseResult {
 
       const it = item as Record<string, unknown>;
 
-      // Check ID
-      if (!it.id || typeof it.id !== "string" || !it.id.trim()) {
-        errors.push(`Item #${idx}: Falta el 'id' único de la narración.`);
+      // Determine canonical ID:
+      // Priority 1: 'id'
+      // Priority 2: 'narrationId' fallback
+      const rawId = typeof it.id === "string" ? it.id.trim() : "";
+      const rawNarrationId = typeof it.narrationId === "string" ? it.narrationId.trim() : "";
+      const canonicalId = rawId || rawNarrationId;
+
+      if (!canonicalId) {
+        errors.push(`Item #${idx}: Falta el identificador único de la narración ('id' o 'narrationId').`);
       } else {
-        if (seenIds.has(it.id)) {
-          errors.push(`Item #${idx}: El ID '${it.id}' está duplicado en el paquete.`);
+        if (seenIds.has(canonicalId)) {
+          errors.push(`Item #${idx}: El ID '${canonicalId}' está duplicado en el paquete.`);
         }
-        seenIds.add(it.id);
+        seenIds.add(canonicalId);
       }
 
-      // Check sceneId
+      // Check sceneId (must be preserved exactly as received)
       if (!it.sceneId || typeof it.sceneId !== "string" || !it.sceneId.trim()) {
-        errors.push(`Item #${idx} (ID: ${it.id || "desconocido"}): Falta el 'sceneId' de la escena de GhostAI.`);
+        errors.push(`Item #${idx} (ID: ${canonicalId || "desconocido"}): Falta el 'sceneId' de la escena de GhostAI.`);
       }
 
       // Check sceneIndex
       if (typeof it.sceneIndex !== "number") {
-        errors.push(`Item #${idx} (ID: ${it.id || "desconocido"}): 'sceneIndex' debe ser un número entero.`);
+        errors.push(`Item #${idx} (ID: ${canonicalId || "desconocido"}): 'sceneIndex' debe ser un número entero.`);
       }
 
       // Check text
       if (typeof it.text !== "string" || !it.text.trim()) {
-        errors.push(`Item #${idx} (ID: ${it.id || "desconocido"}): El 'text' no puede estar vacío.`);
+        errors.push(`Item #${idx} (ID: ${canonicalId || "desconocido"}): El 'text' no puede estar vacío.`);
       }
 
       // Validate speed if provided
@@ -118,10 +124,29 @@ export function parseGhostAiTtsJson(input: string | unknown): ParseResult {
     };
   }
 
-  const validFile = parsed as GhostAiTtsFile;
+  // Normalize all items to canonical 'id' while preserving exact sceneId and metadata
+  const rawItems = raw.items as Record<string, unknown>[];
+  const normalizedItems: GhostAiTtsItem[] = rawItems.map((rawItem) => {
+    const rawId = typeof rawItem.id === "string" ? rawItem.id.trim() : "";
+    const rawNarrationId = typeof rawItem.narrationId === "string" ? rawItem.narrationId.trim() : "";
+    const canonicalId = rawId || rawNarrationId;
+
+    return {
+      ...rawItem,
+      id: canonicalId,
+      sceneId: rawItem.sceneId as string,
+      sceneIndex: rawItem.sceneIndex as number,
+      text: rawItem.text as string,
+    };
+  });
+
+  const validFile: GhostAiTtsFile = {
+    ...(parsed as GhostAiTtsFile),
+    items: normalizedItems,
+  };
 
   // Convert to StudioNarrationItems with initial status PENDING
-  const studioItems: StudioNarrationItem[] = validFile.items.map((item: GhostAiTtsItem) => ({
+  const studioItems: StudioNarrationItem[] = normalizedItems.map((item: GhostAiTtsItem) => ({
     ...item,
     status: "PENDING",
   }));
