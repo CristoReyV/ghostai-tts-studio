@@ -20,6 +20,7 @@ import {
   generateNarrationAudio,
 } from "./services/gateway";
 import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
+import { type VoicePresetId, getRecommendedVoiceForPreset } from "./services/voicePresets";
 import { Header } from "./components/Header";
 import { ProjectImporter } from "./components/ProjectImporter";
 import { ProjectOverview } from "./components/ProjectOverview";
@@ -39,6 +40,7 @@ export const App: React.FC = () => {
   const [items, setItems] = useState<StudioNarrationItem[]>([]);
 
   // Batch configuration states
+  const [selectedPresetId, setSelectedPresetId] = useState<VoicePresetId>("espanol_latino");
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("eleven_multilingual_v2");
   const [selectedOutputFormat, setSelectedOutputFormat] = useState<string>("mp3_44100_128");
@@ -77,11 +79,10 @@ export const App: React.FC = () => {
       setVoices(loadedVoices);
       setModels(loadedModels);
 
-      // Pick default voice if not set
+      // Pick default voice if not set based on the active preset (defaults to Español Latino)
       if (loadedVoices.length > 0 && !selectedVoiceId) {
-        // Prefer Roger or the first voice
-        const preferred = loadedVoices.find((v) => v.name.toLowerCase().includes("roger")) || loadedVoices[0];
-        setSelectedVoiceId(preferred.voiceId);
+        const recommended = getRecommendedVoiceForPreset(selectedPresetId, loadedVoices) || loadedVoices[0];
+        setSelectedVoiceId(recommended.voiceId);
       }
     } catch (err) {
       console.warn("Error conectando al Gateway:", err);
@@ -388,6 +389,8 @@ export const App: React.FC = () => {
                 selectedVoiceId={selectedVoiceId}
                 selectedModelId={selectedModelId}
                 selectedOutputFormat={selectedOutputFormat}
+                selectedPresetId={selectedPresetId}
+                onSelectPreset={setSelectedPresetId}
                 onSelectVoice={setSelectedVoiceId}
                 onSelectModel={setSelectedModelId}
                 onSelectOutputFormat={setSelectedOutputFormat}
