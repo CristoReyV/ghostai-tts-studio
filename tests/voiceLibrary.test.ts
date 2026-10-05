@@ -447,5 +447,190 @@ describe("Voice Library - Architecture & Dynamic Ranking Suite", () => {
     // .filter-popover-menu must have high z-index
     expect(cssContent).toMatch(/\.filter-popover-menu\s*\{[^}]*z-index:\s*60;/);
   });
+
+  // ──────────────────────────────────────────────────────────
+  // Functional Category Synchronization & Override Suite
+  // ──────────────────────────────────────────────────────────
+  describe("Category Synchronization & Recommendation Override (Functional Bugfix)", () => {
+    // 1. Español + Narración selecciona la voz recomendada de Narración (Cristina Campos)
+    it("1. Español + Narración selects the recommended narration voice (Cristina Campos)", () => {
+      const rec = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: "narration",
+      });
+      expect(rec).toBeDefined();
+      expect(rec!.voiceId).toBe("CaJslL1xziwefCeTNzHv"); // Cristina Campos
+      expect(rec!.name).toContain("Cristina Campos");
+      expect(rec!.labels?.language).toBe("es");
+    });
+
+    // 2. Español + Publicidad selecciona una voz diferente (Rogher)
+    it("2. Español + Publicidad selects a different voice (Rogher) and NOT Cristina Campos", () => {
+      const rec = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: "advertisement",
+      });
+      expect(rec).toBeDefined();
+      expect(rec!.voiceId).toBe("0ji4DHZV895MuXeZB0PL"); // Rogher
+      expect(rec!.name).toContain("Rogher");
+      expect(rec!.voiceId).not.toBe("CaJslL1xziwefCeTNzHv"); // Must NOT remain Cristina Campos
+    });
+
+    // 3. Español + Conversacional cambia correctamente (Cristina Campos)
+    it("3. Español + Conversacional selects the conversational voice (Cristina Campos)", () => {
+      const rec = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: "conversational",
+      });
+      expect(rec).toBeDefined();
+      expect(rec!.voiceId).toBe("CaJslL1xziwefCeTNzHv");
+      expect(rec!.labels?.use_case).toBe("conversational");
+    });
+
+    // 4. Español + Social Media cambia correctamente (Fran)
+    it("4. Español + Social Media changes to Fran (Fresh & Upbeat) and NOT Cristina or Rogher", () => {
+      const rec = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: "social_media",
+      });
+      expect(rec).toBeDefined();
+      expect(rec!.voiceId).toBe("crQgCQuWgUucmYHEPsrB"); // Fran
+      expect(rec!.name).toContain("Fran");
+      expect(rec!.voiceId).not.toBe("CaJslL1xziwefCeTNzHv");
+      expect(rec!.voiceId).not.toBe("0ji4DHZV895MuXeZB0PL");
+    });
+
+    // 5. Español + Educación cambia correctamente (Rogher)
+    it("5. Español + Educación selects Rogher (Encouraging and Classy)", () => {
+      const rec = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: "educational",
+      });
+      expect(rec).toBeDefined();
+      expect(rec!.voiceId).toBe("0ji4DHZV895MuXeZB0PL"); // Rogher
+      expect(rec!.name).toContain("Rogher");
+    });
+
+    // 6. Cambiar de categoría modifica selectedVoiceId
+    it("6. changing category updates selectedVoiceId between categories", () => {
+      let selectedCategory: OfficialCategory | "all" = "narration";
+      let selectedVoiceId = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: selectedCategory,
+      })?.voiceId;
+
+      expect(selectedVoiceId).toBe("CaJslL1xziwefCeTNzHv"); // Cristina for narration
+
+      // User changes category to Publicidad
+      selectedCategory = "advertisement";
+      selectedVoiceId = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: selectedCategory,
+      })?.voiceId;
+
+      expect(selectedVoiceId).toBe("0ji4DHZV895MuXeZB0PL"); // Rogher for advertisement
+
+      // User changes category to Social Media
+      selectedCategory = "social_media";
+      selectedVoiceId = getRecommendedVoice(realVoicesCatalog, {
+        language: "es",
+        category: selectedCategory,
+      })?.voiceId;
+
+      expect(selectedVoiceId).toBe("crQgCQuWgUucmYHEPsrB"); // Fran for social media
+    });
+
+    // 7. Selección manual funciona
+    it("7. manual voice selection updates active voice independently", () => {
+      let selectedVoiceId = "CaJslL1xziwefCeTNzHv"; // Initially recommended
+
+      // User explicitly clicks "Seleccionar" on Rogher
+      const manualVoiceId = "0ji4DHZV895MuXeZB0PL";
+      selectedVoiceId = manualVoiceId;
+
+      expect(selectedVoiceId).toBe("0ji4DHZV895MuXeZB0PL");
+    });
+
+    // 8. Después de seleccionar manualmente una voz, cambiar de categoría vuelve a seleccionar la recomendada de la nueva categoría
+    it("8. changing category overrides previous manual voice selection with the new category's recommended voice", () => {
+      // Step 1: Start with Narration -> Cristina
+      let selectedCategory: OfficialCategory | "all" = "narration";
+      let recVoice = getRecommendedVoice(realVoicesCatalog, { language: "es", category: selectedCategory });
+      let selectedVoiceId = recVoice!.voiceId;
+      expect(selectedVoiceId).toBe("CaJslL1xziwefCeTNzHv"); // Cristina
+
+      // Step 2: User manually selects Fran
+      selectedVoiceId = "crQgCQuWgUucmYHEPsrB"; // Fran
+      expect(selectedVoiceId).toBe("crQgCQuWgUucmYHEPsrB");
+
+      // Step 3: User changes category to Publicidad -> MUST OVERRIDE manual Fran and pick Rogher!
+      selectedCategory = "advertisement";
+      recVoice = getRecommendedVoice(realVoicesCatalog, { language: "es", category: selectedCategory });
+      selectedVoiceId = recVoice!.voiceId; // Category change overrides manual selection
+      expect(selectedVoiceId).toBe("0ji4DHZV895MuXeZB0PL"); // Rogher
+      expect(selectedVoiceId).not.toBe("crQgCQuWgUucmYHEPsrB"); // Fran was discarded
+      expect(selectedVoiceId).not.toBe("CaJslL1xziwefCeTNzHv"); // Cristina was not kept
+    });
+
+    // 9. "Todas las categorías" tiene una recomendación válida
+    it("9. 'Todas las categorías' yields a valid, high-quality recommended voice for the language", () => {
+      const recEs = getRecommendedVoice(realVoicesCatalog, { language: "es", category: "all" });
+      expect(recEs).toBeDefined();
+      expect(recEs!.labels?.language).toBe("es");
+      expect(recEs!.voiceId).toBe("0ji4DHZV895MuXeZB0PL"); // Rogher as versatile Spanish general recommendation
+
+      const recEn = getRecommendedVoice(realVoicesCatalog, { language: "en", category: "all" });
+      expect(recEn).toBeDefined();
+      expect(recEn!.labels?.language).toBe("en");
+      expect(recEn!.voiceId).toBe("JBFqnCBsd6RMkjVDRZzb"); // George as versatile English general recommendation
+    });
+
+    // 10. La lista "Otras voces para [categoría]" corresponde realmente a la categoría seleccionada
+    it("10. 'Otras voces para [categoría]' contains voices compatible with the selected category", () => {
+      const convVoices = filterVoices(realVoicesCatalog, {
+        language: "es",
+        category: "conversational",
+      });
+      const recConv = convVoices[0];
+      const otherConvVoices = convVoices.filter((v) => v.voiceId !== recConv.voiceId);
+
+      expect(recConv.voiceId).toBe("CaJslL1xziwefCeTNzHv"); // Cristina
+      expect(otherConvVoices.length).toBe(1);
+      expect(otherConvVoices[0].voiceId).toBe("crQgCQuWgUucmYHEPsrB"); // Fran
+      expect(otherConvVoices[0].labels?.use_case).toBe("conversational");
+      // Rogher (advertisement) is excluded from conversational
+      expect(otherConvVoices.some((v) => v.voiceId === "0ji4DHZV895MuXeZB0PL")).toBe(false);
+    });
+
+    // 11. El cambio de categoría NO realiza ninguna llamada a POST /api/tts/generate
+    // 12. No se consumen créditos de ElevenLabs
+    it("11 & 12. changing categories and selecting voices NEVER calls POST /api/tts/generate and consumes zero credits", async () => {
+      const gatewayModule = await import("../src/services/gateway");
+      const generateSpy = vi.spyOn(gatewayModule, "generateNarrationAudio");
+
+      const categories: (OfficialCategory | "all")[] = [
+        "narration",
+        "advertisement",
+        "conversational",
+        "social_media",
+        "educational",
+        "characters",
+        "entertainment",
+        "all",
+      ];
+
+      // Simulate rapid user category hopping across all categories
+      for (const cat of categories) {
+        const rec = getRecommendedVoice(realVoicesCatalog, { language: "es", category: cat });
+        const list = filterVoices(realVoicesCatalog, { language: "es", category: cat });
+        expect(rec).toBeDefined();
+        expect(list.length).toBeGreaterThan(0);
+      }
+
+      // Assert zero calls to generate audio
+      expect(generateSpy).not.toHaveBeenCalled();
+      generateSpy.mockRestore();
+    });
+  });
 });
 

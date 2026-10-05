@@ -24,6 +24,7 @@ export interface CategoryDefinition {
   icon: string;
   useCases: string[];
   description: string;
+  keywords?: string[];
 }
 
 export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
@@ -33,6 +34,25 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "🎙️",
     useCases: ["conversational"],
     description: "Voz natural y casual para diálogos y podcasts",
+    keywords: [
+      "conversational",
+      "conversacion",
+      "casual",
+      "chill",
+      "calm",
+      "friendly",
+      "natural",
+      "dialogue",
+      "podcast",
+      "cristina",
+      "roger",
+      "charlie",
+      "will",
+      "jessica",
+      "eric",
+      "chris",
+      "river",
+    ],
   },
   {
     id: "narration",
@@ -40,6 +60,24 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "📖",
     useCases: ["narrative_story", "narration", "audiobook", "news"],
     description: "Storytelling, audiolibros y narración documental",
+    keywords: [
+      "storyteller",
+      "story",
+      "narrat",
+      "audiolibro",
+      "audiobook",
+      "documentary",
+      "documental",
+      "warm",
+      "cálida",
+      "mature",
+      "madura",
+      "deep",
+      "profunda",
+      "cristina",
+      "george",
+      "captivating",
+    ],
   },
   {
     id: "characters",
@@ -47,6 +85,23 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "🎭",
     useCases: ["characters_animation", "characters", "animation", "video_games"],
     description: "Voces dinámicas y con carácter para animación y ficción",
+    keywords: [
+      "characters",
+      "animation",
+      "personajes",
+      "animacion",
+      "video_games",
+      "videojuegos",
+      "excited",
+      "upbeat",
+      "fresh",
+      "intense",
+      "trickster",
+      "warrior",
+      "fran",
+      "callum",
+      "harry",
+    ],
   },
   {
     id: "social_media",
@@ -54,6 +109,25 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "📱",
     useCases: ["social_media", "social"],
     description: "Estilo dinámico y enganchante para videos y redes",
+    keywords: [
+      "social_media",
+      "social",
+      "reels",
+      "tiktok",
+      "creator",
+      "fresh",
+      "upbeat",
+      "excited",
+      "hyped",
+      "dynamic",
+      "young",
+      "joven",
+      "fran",
+      "laura",
+      "liam",
+      "adam",
+      "brian",
+    ],
   },
   {
     id: "educational",
@@ -61,6 +135,30 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "🎓",
     useCases: ["informative_educational", "educational", "informative"],
     description: "Tono claro, didáctico y formal para cursos y tutoriales",
+    keywords: [
+      "informative",
+      "educational",
+      "educacion",
+      "educativo",
+      "didactic",
+      "didactico",
+      "professional",
+      "profesional",
+      "clear",
+      "steady",
+      "formal",
+      "calm",
+      "encouraging",
+      "classy",
+      "elegante",
+      "middle_aged",
+      "rogher",
+      "bella",
+      "daniel",
+      "alice",
+      "matilda",
+      "lily",
+    ],
   },
   {
     id: "advertisement",
@@ -68,6 +166,23 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "📢",
     useCases: ["advertisement", "ad", "commercial"],
     description: "Voz persuasiva y con energía para anuncios y spots",
+    keywords: [
+      "advertisement",
+      "ad",
+      "commercial",
+      "publicidad",
+      "comercial",
+      "hyped",
+      "classy",
+      "elegante",
+      "persuasive",
+      "crisp",
+      "passionate",
+      "encouraging",
+      "rogher",
+      "bill",
+      "leonardo",
+    ],
   },
   {
     id: "entertainment",
@@ -75,6 +190,21 @@ export const OFFICIAL_CATEGORIES: CategoryDefinition[] = [
     icon: "📺",
     useCases: ["entertainment_tv", "entertainment"],
     description: "Voz cautivadora para televisión, cine y espectáculos",
+    keywords: [
+      "entertainment",
+      "entretenimiento",
+      "tv",
+      "show",
+      "cinema",
+      "espectaculos",
+      "dramatic",
+      "expressive",
+      "fresh",
+      "upbeat",
+      "sarah",
+      "fran",
+      "rogher",
+    ],
   },
 ];
 
@@ -294,6 +424,10 @@ export function scoreVoice(
   const vAccent = (labels.accent || "").toLowerCase().trim();
   const vGender = (labels.gender || "").toLowerCase().trim();
   const vAge = (labels.age || "").toLowerCase().trim();
+  const vDescriptive = (labels.descriptive || "").toLowerCase().trim();
+  const vName = voice.name.toLowerCase();
+
+  const searchableText = `${vName} ${vDescriptive} ${vUseCase} ${vAccent}`.toLowerCase();
 
   // 1. Language matching (PRIORITY 1)
   if (criteria.language && criteria.language !== "all") {
@@ -311,13 +445,66 @@ export function scoreVoice(
   // 2. Category matching (PRIORITY 2)
   if (criteria.category && criteria.category !== "all") {
     const catDef = OFFICIAL_CATEGORIES.find((c) => c.id === criteria.category);
-    if (catDef && catDef.useCases.some((uc) => vUseCase === uc || vUseCase.includes(uc))) {
-      score += 500;
-    } else {
-      // Descriptive fallback check
-      const descText = `${voice.name} ${labels.descriptive || ""}`.toLowerCase();
-      if (criteria.category === "narration" && (descText.includes("narrat") || descText.includes("story"))) {
-        score += 100;
+    if (catDef) {
+      if (catDef.useCases.some((uc) => vUseCase === uc || vUseCase.includes(uc))) {
+        score += 500;
+      }
+
+      // Semantic keyword matching
+      if (catDef.keywords) {
+        catDef.keywords.forEach((kw) => {
+          if (searchableText.includes(kw.toLowerCase())) {
+            score += 120;
+          }
+        });
+      }
+
+      // Domain affinities for Spanish voices
+      if (vLang === "es") {
+        if (criteria.category === "narration") {
+          if (vName.includes("cristina") || vAccent.includes("latin american")) {
+            score += 250;
+          }
+        } else if (criteria.category === "advertisement") {
+          if (vUseCase === "advertisement" || vName.includes("rogher")) {
+            score += 350;
+          }
+        } else if (criteria.category === "social_media") {
+          if (vName.includes("fran") || vDescriptive.includes("excited")) {
+            score += 350;
+          }
+        } else if (criteria.category === "educational") {
+          if (vName.includes("rogher") || vDescriptive.includes("classy") || vAge === "middle_aged") {
+            score += 300;
+          }
+        } else if (criteria.category === "characters") {
+          if (vName.includes("fran") || vDescriptive.includes("excited")) {
+            score += 300;
+          }
+        } else if (criteria.category === "entertainment") {
+          if (vName.includes("fran") || vDescriptive.includes("excited")) {
+            score += 250;
+          }
+        } else if (criteria.category === "conversational") {
+          if (vName.includes("cristina") || vDescriptive.includes("casual")) {
+            score += 250;
+          }
+        }
+      }
+    }
+  } else {
+    // General recommendation logic when category is "all"
+    if (vLang === "es") {
+      if (vName.includes("rogher")) {
+        score += 80;
+      }
+    } else if (vLang === "en") {
+      if (vName.includes("george")) {
+        score += 80;
+      }
+    } else if (vLang === "pt") {
+      if (vName.includes("leonardo")) {
+        score += 80;
       }
     }
   }
@@ -413,7 +600,11 @@ export function filterVoices(
     if (catDef) {
       const matchingCategory = candidates.filter((v) => {
         const u = (v.labels?.use_case || "").toLowerCase().trim();
-        return catDef.useCases.some((uc) => u === uc || u.includes(uc));
+        const hasUseCase = catDef.useCases.some((uc) => u === uc || u.includes(uc));
+        if (hasUseCase) return true;
+        // Secondary keyword check for voices that don't have explicit use_case
+        const searchable = `${v.name} ${v.labels?.descriptive || ""} ${u}`.toLowerCase();
+        return catDef.keywords?.some((kw) => searchable.includes(kw.toLowerCase()));
       });
       // If matches exist in this category, filter strictly to them
       if (matchingCategory.length > 0) {

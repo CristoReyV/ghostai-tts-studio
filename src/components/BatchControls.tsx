@@ -243,6 +243,29 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     }
   };
 
+  // Track previous category and language to sync recommendation when changed
+  const prevCategoryRef = useRef<OfficialCategory | "all">(selectedCategory);
+  const prevLangRef = useRef<string>(selectedLanguage);
+
+  useEffect(() => {
+    if (prevCategoryRef.current !== selectedCategory || prevLangRef.current !== selectedLanguage) {
+      prevCategoryRef.current = selectedCategory;
+      prevLangRef.current = selectedLanguage;
+
+      const newCriteria: VoiceFilterCriteria = {
+        language: selectedLanguage,
+        category: selectedCategory,
+        accent: selectedAccent,
+        gender: selectedGender,
+        age: selectedAge,
+      };
+      const newRec = getRecommendedVoice(voices, newCriteria, availabilityMap);
+      if (newRec && newRec.voiceId !== selectedVoiceId) {
+        onSelectVoice(newRec.voiceId);
+      }
+    }
+  }, [selectedCategory, selectedLanguage, selectedAccent, selectedGender, selectedAge, voices, availabilityMap, onSelectVoice, selectedVoiceId]);
+
   const handleCategoryChange = (catCode: OfficialCategory | "all") => {
     onSelectCategory(catCode);
     setIsCatMenuOpen(false);
@@ -608,8 +631,10 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 </div>
 
                 <p className="hero-voice-description">
-                  {recommendedVoice.labels?.descriptive
-                    ? `Estilo ${recommendedVoice.labels.descriptive} optimizado para narración de alta calidad.`
+                  {activeCategoryDef
+                    ? `Recomendada para ${activeCategoryDef.label}: ${activeCategoryDef.description.toLowerCase()}.`
+                    : recommendedVoice.labels?.descriptive
+                    ? `Estilo ${recommendedVoice.labels.descriptive} optimizado para síntesis de alta calidad.`
                     : "Voz seleccionada por afinidad acústica y metadatos de categoría."}
                 </p>
               </div>
