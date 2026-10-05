@@ -21,11 +21,11 @@ import {
 } from "./services/gateway";
 import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
 import {
-  type VoicePresetId,
+  type OfficialCategory,
   type VoiceAvailabilityMap,
-  getRecommendedVoiceForPreset,
+  getRecommendedVoice,
   formatVoiceAvailabilityError,
-} from "./services/voicePresets";
+} from "./services/voiceLibrary";
 import { Header } from "./components/Header";
 import { ProjectImporter } from "./components/ProjectImporter";
 import { ProjectOverview } from "./components/ProjectOverview";
@@ -48,7 +48,8 @@ export const App: React.FC = () => {
   const [items, setItems] = useState<StudioNarrationItem[]>([]);
 
   // Batch configuration states
-  const [selectedPresetId, setSelectedPresetId] = useState<VoicePresetId>("espanol_latino");
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("es");
+  const [selectedCategory, setSelectedCategory] = useState<OfficialCategory | "all">("narration");
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>("");
   const [selectedModelId, setSelectedModelId] = useState<string>("eleven_multilingual_v2");
   const [selectedOutputFormat, setSelectedOutputFormat] = useState<string>("mp3_44100_128");
@@ -87,10 +88,14 @@ export const App: React.FC = () => {
       setVoices(loadedVoices);
       setModels(loadedModels);
 
-      // Pick default voice if not set based on the active preset (defaults to Español Latino)
+      // Pick default voice if not set based on active criteria (Español + Narración)
       if (loadedVoices.length > 0 && !selectedVoiceId) {
         const recommended =
-          getRecommendedVoiceForPreset(selectedPresetId, loadedVoices, voiceAvailability) || loadedVoices[0];
+          getRecommendedVoice(
+            loadedVoices,
+            { language: selectedLanguage, category: selectedCategory },
+            voiceAvailability
+          ) || loadedVoices[0];
         setSelectedVoiceId(recommended.voiceId);
       }
     } catch (err) {
@@ -105,7 +110,7 @@ export const App: React.FC = () => {
     } finally {
       setCheckingHealth(false);
     }
-  }, [selectedVoiceId, selectedPresetId, voiceAvailability]);
+  }, [selectedVoiceId, selectedLanguage, selectedCategory, voiceAvailability]);
 
   useEffect(() => {
     loadGatewayData();
@@ -422,9 +427,11 @@ export const App: React.FC = () => {
                 selectedVoiceId={selectedVoiceId}
                 selectedModelId={selectedModelId}
                 selectedOutputFormat={selectedOutputFormat}
-                selectedPresetId={selectedPresetId}
+                selectedLanguage={selectedLanguage}
+                selectedCategory={selectedCategory}
                 availabilityMap={voiceAvailability}
-                onSelectPreset={setSelectedPresetId}
+                onSelectLanguage={setSelectedLanguage}
+                onSelectCategory={setSelectedCategory}
                 onSelectVoice={setSelectedVoiceId}
                 onSelectModel={setSelectedModelId}
                 onSelectOutputFormat={setSelectedOutputFormat}
