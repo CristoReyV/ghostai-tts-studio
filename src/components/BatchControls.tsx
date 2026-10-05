@@ -55,6 +55,8 @@ import {
   getModelDescription,
 } from "../services/voiceLibrary";
 
+export const CATALOG_PAGE_SIZE = 12;
+
 export interface BatchControlsProps {
   voices: GatewayVoice[];
   models: GatewayModel[];
@@ -232,7 +234,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       const queryParams: VoiceLibraryQueryParams = {
         language: selectedLanguage,
         page: 0,
-        pageSize: 24,
+        pageSize: CATALOG_PAGE_SIZE,
         sort: "usage_character_count_1y",
       };
 
@@ -282,7 +284,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     const queryParams: VoiceLibraryQueryParams = {
       language: selectedLanguage,
       page: nextPage,
-      pageSize: 24,
+      pageSize: CATALOG_PAGE_SIZE,
       sort: "usage_character_count_1y",
     };
 
@@ -797,19 +799,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                           <BookmarkCheck size={12} className="mr-1" /> EN TU COLECCIÓN
                         </span>
                       )}
-                      {typeof voice.rate === "number" && voice.rate > 0 && (
-                        <span className="badge-custom-rate" title="Custom Rate aplicado">
-                          Rate: {voice.rate}
-                        </span>
-                      )}
-                      {typeof voice.noticePeriod === "number" && voice.noticePeriod > 0 && (
-                        <span
-                          className="badge-notice-period"
-                          title={`Aviso previo: ${voice.noticePeriod} días`}
-                        >
-                          Aviso {voice.noticePeriod}d
-                        </span>
-                      )}
                     </div>
                   </div>
 
@@ -836,6 +825,23 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                       </span>
                     )}
                   </div>
+
+                  {/* Secondary Technical Metadata: Rate & Notice Period */}
+                  {((typeof voice.rate === "number" && voice.rate > 0) ||
+                    (typeof voice.noticePeriod === "number" && voice.noticePeriod > 0)) && (
+                    <div className="card-technical-info">
+                      {typeof voice.rate === "number" && voice.rate > 0 && (
+                        <span className="tech-meta-item">Rate {voice.rate}</span>
+                      )}
+                      {typeof voice.rate === "number" &&
+                        voice.rate > 0 &&
+                        typeof voice.noticePeriod === "number" &&
+                        voice.noticePeriod > 0 && <span className="tech-meta-sep">·</span>}
+                      {typeof voice.noticePeriod === "number" && voice.noticePeriod > 0 && (
+                        <span className="tech-meta-item">Aviso {voice.noticePeriod}d</span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Actions: Preview & Usar Voz */}
                   <div className="card-actions-row">
@@ -913,7 +919,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 </>
               ) : (
                 <>
-                  <span>CARGAR MÁS VOCES (24 más)</span>
+                  <span>CARGAR MÁS VOCES ({CATALOG_PAGE_SIZE} más)</span>
                 </>
               )}
             </button>

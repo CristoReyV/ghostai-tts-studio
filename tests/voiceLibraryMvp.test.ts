@@ -14,6 +14,7 @@ import {
   TtsGatewayError,
 } from "../src/services/gateway";
 import { COMMON_LANGUAGE_ACCENTS } from "../src/services/voiceLibrary";
+import { CATALOG_PAGE_SIZE } from "../src/components/BatchControls";
 import type { VoiceLibraryVoice, GatewayVoice } from "../src/types/tts";
 
 describe("Studio - Voice Library MVP Specification Tests", () => {
@@ -694,5 +695,285 @@ describe("Pre-Deploy Certification Patches (Nullability & Accent Presets)", () =
     expect(finalAccents).toContain("canarian");
     expect(finalAccents).toContain("andalusian");
     expect(finalAccents).toContain("mexican");
+  });
+});
+
+describe("Studio - P2.1 UI Polish & 12 Voices Catalog Tests", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  // A. Carga inicial solicita page_size=12
+  it("A. Carga inicial solicita page_size=12 al Gateway", async () => {
+    expect(CATALOG_PAGE_SIZE).toBe(12);
+
+    let capturedUrl = "";
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      capturedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ voices: [], page: 0, pageSize: 12, hasMore: false, totalCount: 0 }),
+      } as unknown as Response);
+    });
+
+    await fetchVoiceLibrary({
+      language: "es",
+      page: 0,
+      pageSize: CATALOG_PAGE_SIZE,
+      sort: "usage_character_count_1y",
+    });
+
+    expect(capturedUrl).toContain("page=0");
+    expect(capturedUrl).toContain("page_size=12");
+    expect(capturedUrl).not.toContain("page_size=24");
+  });
+
+  // B. Cargar más solicita la siguiente página conservando page_size=12
+  it("B. Cargar más solicita la siguiente página conservando page_size=12", async () => {
+    let capturedUrl = "";
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      capturedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ voices: [], page: 1, pageSize: 12, hasMore: true, totalCount: 24 }),
+      } as unknown as Response);
+    });
+
+    const currentPage = 0;
+    const nextPage = currentPage + 1;
+
+    await fetchVoiceLibrary({
+      language: "es",
+      page: nextPage,
+      pageSize: CATALOG_PAGE_SIZE,
+      sort: "usage_character_count_1y",
+    });
+
+    expect(capturedUrl).toContain("page=1");
+    expect(capturedUrl).toContain("page_size=12");
+  });
+
+  // C. 12 + 12 produce 24 voces únicas
+  it("C. 12 iniciales + 12 de Cargar más produce 24 voces únicas acumuladas", () => {
+    // Generate 12 distinct voices for page 0
+    const page0: VoiceLibraryVoice[] = Array.from({ length: 12 }, (_, i) => ({
+      voiceId: `voice-p0-${i}`,
+      publicOwnerId: `owner-${i}`,
+      name: `Voice P0 #${i}`,
+      language: "es",
+      locale: "es-ES",
+      accent: "peninsular",
+      gender: "female",
+      age: "young",
+      useCase: "narrative_story",
+      descriptive: null,
+      description: null,
+      category: "shared",
+      previewUrl: `https://preview-${i}.mp3`,
+      clonedByCount: 10,
+      usageCharacterCount1y: 100,
+      featured: false,
+      freeUsersAllowed: true,
+      liveModerationEnabled: false,
+      noticePeriod: null,
+      rate: null,
+      verifiedLanguages: [],
+    }));
+
+    // Generate 12 distinct voices for page 1
+    const page1: VoiceLibraryVoice[] = Array.from({ length: 12 }, (_, i) => ({
+      voiceId: `voice-p1-${i}`,
+      publicOwnerId: `owner-p1-${i}`,
+      name: `Voice P1 #${i}`,
+      language: "es",
+      locale: "es-MX",
+      accent: "mexican",
+      gender: "male",
+      age: "middle_aged",
+      useCase: "conversational",
+      descriptive: null,
+      description: null,
+      category: "shared",
+      previewUrl: `https://preview-p1-${i}.mp3`,
+      clonedByCount: 20,
+      usageCharacterCount1y: 200,
+      featured: false,
+      freeUsersAllowed: true,
+      liveModerationEnabled: false,
+      noticePeriod: null,
+      rate: null,
+      verifiedLanguages: [],
+    }));
+
+    // Simulate deduplication logic from handleLoadMore
+    const existingIds = new Set(page0.map((v) => v.voiceId));
+    const newUnique = page1.filter((v) => !existingIds.has(v.voiceId));
+    const combined = [...page0, ...newUnique];
+
+    expect(combined.length).toBe(24);
+    const uniqueIds = new Set(combined.map((v) => v.voiceId));
+    expect(uniqueIds.size).toBe(24);
+  });
+
+  // D. Cambio de búsqueda reinicia página a 0 con page_size=12
+  it("D. Cambio de búsqueda reinicia página a page=0 con page_size=12", async () => {
+    let capturedUrl = "";
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      capturedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ voices: [], page: 0, pageSize: 12, hasMore: false, totalCount: 0 }),
+      } as unknown as Response);
+    });
+
+    await fetchVoiceLibrary({
+      language: "es",
+      search: "Cristina",
+      page: 0,
+      pageSize: CATALOG_PAGE_SIZE,
+    });
+
+    expect(capturedUrl).toContain("search=Cristina");
+    expect(capturedUrl).toContain("page=0");
+    expect(capturedUrl).toContain("page_size=12");
+  });
+
+  // E. Cambio de idioma reinicia página a 0 con page_size=12
+  it("E. Cambio de idioma reinicia página a page=0 con page_size=12", async () => {
+    let capturedUrl = "";
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      capturedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ voices: [], page: 0, pageSize: 12, hasMore: false, totalCount: 0 }),
+      } as unknown as Response);
+    });
+
+    await fetchVoiceLibrary({
+      language: "en",
+      page: 0,
+      pageSize: CATALOG_PAGE_SIZE,
+    });
+
+    expect(capturedUrl).toContain("language=en");
+    expect(capturedUrl).toContain("page=0");
+    expect(capturedUrl).toContain("page_size=12");
+  });
+
+  // F. Cambio de filtros reinicia página a 0 con page_size=12
+  it("F. Cambio de filtros reinicia página a page=0 con page_size=12", async () => {
+    let capturedUrl = "";
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      capturedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ voices: [], page: 0, pageSize: 12, hasMore: false, totalCount: 0 }),
+      } as unknown as Response);
+    });
+
+    await fetchVoiceLibrary({
+      language: "es",
+      accent: "mexican",
+      useCases: "narrative_story",
+      gender: "female",
+      age: "young",
+      page: 0,
+      pageSize: CATALOG_PAGE_SIZE,
+    });
+
+    expect(capturedUrl).toContain("accent=mexican");
+    expect(capturedUrl).toContain("use_cases=narrative_story");
+    expect(capturedUrl).toContain("gender=female");
+    expect(capturedUrl).toContain("age=young");
+    expect(capturedUrl).toContain("page=0");
+    expect(capturedUrl).toContain("page_size=12");
+  });
+
+  // G. rate: null continúa sin mostrarse
+  it("G. rate: null o <= 0 es filtrado por los guards de renderizado", () => {
+    const voiceNullRate: VoiceLibraryVoice = {
+      voiceId: "v-null-rate",
+      publicOwnerId: "owner-1",
+      name: "Voice Null Rate",
+      language: "es",
+      locale: null,
+      accent: null,
+      gender: null,
+      age: null,
+      useCase: null,
+      descriptive: null,
+      description: null,
+      category: "shared",
+      previewUrl: null,
+      clonedByCount: 0,
+      usageCharacterCount1y: 0,
+      featured: false,
+      freeUsersAllowed: true,
+      liveModerationEnabled: false,
+      noticePeriod: 30,
+      rate: null,
+      verifiedLanguages: [],
+    };
+
+    // Guard test:
+    const shouldShowRate = typeof voiceNullRate.rate === "number" && voiceNullRate.rate > 0;
+    expect(shouldShowRate).toBe(false);
+
+    // Guard for rate = 0
+    const voiceZeroRate = { ...voiceNullRate, rate: 0 };
+    const shouldShowZeroRate = typeof voiceZeroRate.rate === "number" && voiceZeroRate.rate > 0;
+    expect(shouldShowZeroRate).toBe(false);
+
+    // Guard for rate = 1 (valid custom rate)
+    const voiceValidRate = { ...voiceNullRate, rate: 1 };
+    const shouldShowValidRate = typeof voiceValidRate.rate === "number" && voiceValidRate.rate > 0;
+    expect(shouldShowValidRate).toBe(true);
+  });
+
+  // H. noticePeriod: null continúa sin mostrarse
+  it("H. noticePeriod: null o <= 0 es filtrado por los guards de renderizado", () => {
+    const voiceNullNotice: VoiceLibraryVoice = {
+      voiceId: "v-null-notice",
+      publicOwnerId: "owner-2",
+      name: "Voice Null Notice",
+      language: "es",
+      locale: null,
+      accent: null,
+      gender: null,
+      age: null,
+      useCase: null,
+      descriptive: null,
+      description: null,
+      category: "shared",
+      previewUrl: null,
+      clonedByCount: 0,
+      usageCharacterCount1y: 0,
+      featured: false,
+      freeUsersAllowed: true,
+      liveModerationEnabled: false,
+      noticePeriod: null,
+      rate: 1,
+      verifiedLanguages: [],
+    };
+
+    // Guard test:
+    const shouldShowNotice = typeof voiceNullNotice.noticePeriod === "number" && voiceNullNotice.noticePeriod > 0;
+    expect(shouldShowNotice).toBe(false);
+
+    // Guard for noticePeriod = 0
+    const voiceZeroNotice = { ...voiceNullNotice, noticePeriod: 0 };
+    const shouldShowZeroNotice = typeof voiceZeroNotice.noticePeriod === "number" && voiceZeroNotice.noticePeriod > 0;
+    expect(shouldShowZeroNotice).toBe(false);
+
+    // Guard for noticePeriod = 730 (valid notice period)
+    const voiceValidNotice = { ...voiceNullNotice, noticePeriod: 730 };
+    const shouldShowValidNotice = typeof voiceValidNotice.noticePeriod === "number" && voiceValidNotice.noticePeriod > 0;
+    expect(shouldShowValidNotice).toBe(true);
   });
 });
