@@ -113,6 +113,28 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
   const [isCatMenuOpen, setIsCatMenuOpen] = useState(false);
 
+  // Refs for click outside to close dropdowns
+  const langDropdownRef = useRef<HTMLDivElement | null>(null);
+  const catDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (isLangMenuOpen && langDropdownRef.current && !langDropdownRef.current.contains(target)) {
+        setIsLangMenuOpen(false);
+      }
+      if (isCatMenuOpen && catDropdownRef.current && !catDropdownRef.current.contains(target)) {
+        setIsCatMenuOpen(false);
+      }
+    };
+    if (isLangMenuOpen || isCatMenuOpen) {
+      document.addEventListener("mousedown", handleOutsideClick);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [isLangMenuOpen, isCatMenuOpen]);
+
   // UI state for modals & accordions
   const [appliedNotice, setAppliedNotice] = useState(false);
   const [isExplorerOpen, setIsExplorerOpen] = useState(false);
@@ -302,7 +324,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       {/* ────────────────────────────────────────────────────────── */}
       {/* 1. SECCIÓN PRINCIPAL: FILTROS DE IDIOMA Y CATEGORÍA       */}
       {/* ────────────────────────────────────────────────────────── */}
-      <div className="studio-header-card">
+      <div className={`studio-header-card ${isLangMenuOpen || isCatMenuOpen ? "has-open-dropdown" : ""}`}>
         <div className="studio-title-row">
           <div>
             <span className="section-eyebrow">BIBLIOTECA DE VOCES</span>
@@ -317,7 +339,10 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
         {/* DOS FILTROS PRINCIPALES (GRANDES Y VISUALES) */}
         <div className="primary-filters-grid">
           {/* A) FILTRO IDIOMA */}
-          <div className="filter-dropdown-container">
+          <div
+            ref={langDropdownRef}
+            className={`filter-dropdown-container ${isLangMenuOpen ? "is-open" : ""}`}
+          >
             <label className="filter-field-label">
               <Globe size={14} className="text-accent mr-1 inline" /> IDIOMA
             </label>
@@ -359,7 +384,10 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           </div>
 
           {/* B) FILTRO CATEGORÍA */}
-          <div className="filter-dropdown-container">
+          <div
+            ref={catDropdownRef}
+            className={`filter-dropdown-container ${isCatMenuOpen ? "is-open" : ""}`}
+          >
             <label className="filter-field-label">
               <Mic size={14} className="text-accent mr-1 inline" /> CATEGORÍA
             </label>

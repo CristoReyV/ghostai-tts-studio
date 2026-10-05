@@ -424,4 +424,28 @@ describe("Voice Library - Architecture & Dynamic Ranking Suite", () => {
     expect(rec).toBeDefined();
     expect(rec!.voiceId).toBe("crQgCQuWgUucmYHEPsrB"); // Fran wins over failed Cristina
   });
+
+  // 17. Stacking Context & Z-Index Contracts for Category/Language Dropdowns
+  it("verifies index.css defines proper stacking context and z-index hierarchy for category dropdown", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const cssContent = fs.readFileSync(
+      path.resolve(__dirname, "../src/index.css"),
+      "utf-8"
+    );
+
+    // .studio-header-card must have position: relative and z-index >= 10
+    expect(cssContent).toMatch(/\.studio-header-card\s*\{[^}]*position:\s*relative;/);
+    expect(cssContent).toMatch(/\.studio-header-card\.has-open-dropdown[^{]*\{[^}]*z-index:\s*30;/);
+
+    // .filter-dropdown-container must have elevated z-index when open
+    expect(cssContent).toMatch(/\.filter-dropdown-container\.is-open[^{]*\{[^}]*z-index:\s*25;/);
+
+    // .recommended-voice-showcase must be lower in stacking order
+    expect(cssContent).toMatch(/\.recommended-voice-showcase\s*\{[^}]*z-index:\s*1;/);
+
+    // .filter-popover-menu must have high z-index
+    expect(cssContent).toMatch(/\.filter-popover-menu\s*\{[^}]*z-index:\s*60;/);
+  });
 });
+
