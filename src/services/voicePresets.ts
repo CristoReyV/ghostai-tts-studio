@@ -26,6 +26,7 @@ export interface VoicePreset {
   name: string;
   emoji: string;
   description: string;
+  defaultVoiceId?: string;
   targetKeywords: {
     useCases?: string[];
     descriptive?: string[];
@@ -42,14 +43,54 @@ export interface VoicePreset {
 
 export const VOICE_PRESETS: VoicePreset[] = [
   {
+    id: "espanol_latino",
+    name: "Español / Neutro",
+    emoji: "🇪🇸",
+    description: "Voz clara, natural y profesional para narraciones en español.",
+    defaultVoiceId: "SAz9YHcvj6GT2YYXdXww", // River - Relaxed, Neutral, Informative
+    targetKeywords: {
+      languages: ["es"],
+      accents: ["latin american", "colombian"],
+      nameKeywords: ["river", "latino", "español", "spanish", "campos", "rogher", "fran"],
+    },
+    negativeKeywords: {
+      languages: ["en", "pt"],
+      accents: ["british", "australian", "american"],
+    },
+  },
+  {
     id: "narrativo_epico",
     name: "Narrativo Épico",
     emoji: "🎬",
-    description: "Voces profundas, expresivas y con presencia para historias, documentales y contenido cinematográfico.",
+    description: "Storytelling cinematográfico, cálido y cautivador.",
+    defaultVoiceId: "JBFqnCBsd6RMkjVDRZzb", // George - Warm, Captivating Storyteller
     targetKeywords: {
       useCases: ["narrative_story", "entertainment_tv"],
       descriptive: ["mature", "classy", "confident", "rough", "formal"],
-      nameKeywords: ["storyteller", "deep", "resonant", "mature", "captivating", "warrior", "firm"],
+      nameKeywords: ["george", "storyteller", "deep", "resonant", "mature", "captivating", "warrior", "firm"],
+    },
+  },
+  {
+    id: "comercial_publicidad",
+    name: "Comercial / Publicidad",
+    emoji: "📢",
+    description: "Voz energética, llamativa y con personalidad para anuncios.",
+    defaultVoiceId: "N2lVS1w4EtoT3dr4eOWO", // Callum - Husky Trickster
+    targetKeywords: {
+      useCases: ["advertisement"],
+      descriptive: ["hyped", "classy", "confident", "crisp", "professional"],
+      nameKeywords: ["callum", "trickster", "husky", "encouraging", "passionate", "confident", "bright", "creator"],
+    },
+  },
+  {
+    id: "conversacional_natural",
+    name: "Conversacional Natural",
+    emoji: "💬",
+    description: "Voz casual, cercana y natural para contenido social.",
+    targetKeywords: {
+      useCases: ["conversational"],
+      descriptive: ["casual", "chill", "calm", "friendly", "natural"],
+      nameKeywords: ["casual", "laid-back", "down-to-earth", "optimist", "friendly", "chris", "sarah"],
     },
   },
   {
@@ -86,17 +127,6 @@ export const VOICE_PRESETS: VoicePreset[] = [
     },
   },
   {
-    id: "comercial_publicidad",
-    name: "Comercial / Publicidad",
-    emoji: "📢",
-    description: "Voces claras, atractivas y dinámicas para anuncios y promociones.",
-    targetKeywords: {
-      useCases: ["advertisement"],
-      descriptive: ["hyped", "classy", "confident", "crisp", "professional"],
-      nameKeywords: ["encouraging", "passionate", "confident", "bright", "creator"],
-    },
-  },
-  {
     id: "corporativo_profesional",
     name: "Corporativo / Profesional",
     emoji: "💼",
@@ -117,32 +147,6 @@ export const VOICE_PRESETS: VoicePreset[] = [
       useCases: ["social_media"],
       descriptive: ["sassy", "confident", "hyped", "excited", "upbeat"],
       nameKeywords: ["creator", "enthusiast", "energetic", "quirky"],
-    },
-  },
-  {
-    id: "conversacional_natural",
-    name: "Conversacional Natural",
-    emoji: "💬",
-    description: "Una voz natural, cercana y poco formal.",
-    targetKeywords: {
-      useCases: ["conversational"],
-      descriptive: ["casual", "chill", "calm", "friendly", "natural"],
-      nameKeywords: ["casual", "laid-back", "down-to-earth", "optimist", "friendly"],
-    },
-  },
-  {
-    id: "espanol_latino",
-    name: "Español Latino / Neutro",
-    emoji: "🌎",
-    description: "Voces nativas y optimizadas para pronunciación natural en español latinoamericano.",
-    targetKeywords: {
-      languages: ["es"],
-      accents: ["latin american", "colombian"],
-      nameKeywords: ["latino", "español", "spanish", "campos", "rogher", "fran", "cristina"],
-    },
-    negativeKeywords: {
-      languages: ["en", "pt"],
-      accents: ["british", "australian", "american"],
     },
   },
   {
@@ -290,6 +294,11 @@ export function scoreVoiceForPreset(voice: GatewayVoice, preset: VoicePreset): n
   }
   if (voice.category === "professional") {
     score += 5;
+  }
+
+  // 8. Preset default voice affinity
+  if (preset.defaultVoiceId && voice.voiceId === preset.defaultVoiceId) {
+    score += 100;
   }
 
   return score;

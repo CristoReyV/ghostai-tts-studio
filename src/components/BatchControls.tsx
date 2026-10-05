@@ -1,22 +1,30 @@
 /**
  * @file src/components/BatchControls.tsx
- * Redesigned Voice & Format Selector with High-Level Voice Presets,
- * Dynamic Metadata Matching, Streamlined Default Format, and Collapsible Advanced Config.
+ * Professional Voice Studio Control Bar:
+ * - Visual Preset Buttons (preset click dynamically selects recommended voice)
+ * - Large Visual Voice Card with active/recommended state distinction
+ * - Voice Explorer Modal for manual voice discovery
+ * - Streamlined Model and Output Format cards with collapsible advanced settings
+ * - Global singleton audio player for sample preview without memory leaks
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Play,
   RotateCcw,
   Square,
   PackageCheck,
   Volume2,
+  VolumeX,
   Sliders,
   Check,
   ChevronDown,
   ChevronUp,
   Settings,
   Sparkles,
+  Mic,
+  Search,
+  X,
 } from "lucide-react";
 import type { GatewayModel, GatewayVoice } from "../types/tts";
 import {
@@ -74,71 +82,87 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   readyCount,
   totalCount,
 }) => {
-  const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
-  const [isPlayingVoicePreview, setIsPlayingVoicePreview] = useState(false);
-  const [appliedNotice, setAppliedNotice] = useState(false);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  // Global Audio Preview Singleton Player
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
 
+  // UI state
+  const [appliedNotice, setAppliedNotice] = useState(false);
+  const [isExplorerOpen, setIsExplorerOpen] = useState(false);
+  const [explorerSearch, setExplorerSearch] = useState("");
+  const [explorerFilter, setExplorerFilter] = useState<"all" | "es" | "en">("all");
+  const [isModelAdvancedOpen, setIsModelAdvancedOpen] = useState(false);
+  const [isFormatAdvancedOpen, setIsFormatAdvancedOpen] = useState(false);
+
+  // Find models, voices and presets
   const selectedVoice = voices.find((v) => v.voiceId === selectedVoiceId);
   const selectedModel = models.find((m) => m.modelId === selectedModelId);
   const activePreset = VOICE_PRESETS.find((p) => p.id === selectedPresetId) || VOICE_PRESETS[0];
 
-  // Determine if current voice is a manual override or matches the preset recommendation
+  // Recommended voice for active preset
   const recommendedVoiceForPreset = getRecommendedVoiceForPreset(selectedPresetId, voices, availabilityMap);
+
+  // Distinguish recommended vs manual override
   const isManualOverride = Boolean(
     recommendedVoiceForPreset && selectedVoiceId && selectedVoiceId !== recommendedVoiceForPreset.voiceId
   );
-
-  const recommendedBadgeText =
-    selectedPresetId === "espanol_latino" ? "Voz recomendada para español" : "Recomendada";
 
   const selectedVoiceAvail = selectedVoiceId ? availabilityMap?.[selectedVoiceId] : undefined;
   const isSelectedVoiceFailed = selectedVoiceAvail?.status === "failed";
   const isSelectedVoiceWorking = selectedVoiceAvail?.status === "working";
 
-  // Handle Voice Preview
-  const handlePlayVoicePreview = () => {
-    if (!selectedVoice?.previewUrl) return;
+  // Singleton Audio Player
+  const handlePlayVoicePreview = (voiceId: string, previewUrl: string) => {
+    if (!previewUrl) return;
 
-    if (previewAudio) {
-      previewAudio.pause();
-      previewAudio.currentTime = 0;
-      if (isPlayingVoicePreview) {
-        setIsPlayingVoicePreview(false);
-        return;
-      }
+    if (playingVoiceId === voiceId && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setPlayingVoiceId(null);
+      return;
     }
 
-    const audio = new Audio(selectedVoice.previewUrl);
-    setPreviewAudio(audio);
-    setIsPlayingVoicePreview(true);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
 
-    audio.onended = () => setIsPlayingVoicePreview(false);
-    audio.onerror = () => setIsPlayingVoicePreview(false);
-    audio.play().catch(() => setIsPlayingVoicePreview(false));
+    try {
+      const audio = new Audio(previewUrl);
+      audioRef.current = audio;
+      setPlayingVoiceId(voiceId);
+
+      audio.onended = () => setPlayingVoiceId(null);
+      audio.onerror = () => setPlayingVoiceId(null);
+      audio.play().catch(() => setPlayingVoiceId(null));
+    } catch {
+      setPlayingVoiceId(null);
+    }
   };
 
   // Clean up audio on unmount
   useEffect(() => {
     return () => {
-      if (previewAudio) {
-        previewAudio.pause();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
       }
     };
-  }, [previewAudio]);
+  }, []);
+
+  // Preset Click Handler: MUST update selectedPresetId AND selectedVoiceId to recommended voice
+  const handlePresetClick = (presetId: VoicePresetId) => {
+    onSelectPreset(presetId);
+    const recVoice = getRecommendedVoiceForPreset(presetId, voices, availabilityMap);
+    if (recVoice) {
+      onSelectVoice(recVoice.voiceId);
+    }
+  };
 
   const handleApplyClick = () => {
     onApplyToPending();
     setAppliedNotice(true);
     setTimeout(() => setAppliedNotice(false), 2000);
-  };
-
-  const handlePresetChange = (presetId: VoicePresetId) => {
-    onSelectPreset(presetId);
-    const bestVoice = getRecommendedVoiceForPreset(presetId, voices, availabilityMap);
-    if (bestVoice) {
-      onSelectVoice(bestVoice.voiceId);
-    }
   };
 
   const formats = [
@@ -151,204 +175,361 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
   const currentFormatObj = formats.find((f) => f.id === selectedOutputFormat) || formats[0];
 
+  // Filter voices for explorer modal
+  const filteredExplorerVoices = useMemo(() => {
+    let result = voices;
+    if (explorerFilter === "es") {
+      result = result.filter(
+        (v) =>
+          v.labels?.language === "es" ||
+          v.labels?.accent?.toLowerCase().includes("colombian") ||
+          v.labels?.accent?.toLowerCase().includes("latin")
+      );
+    } else if (explorerFilter === "en") {
+      result = result.filter((v) => v.labels?.language === "en" || !v.labels?.language);
+    }
+
+    if (explorerSearch.trim()) {
+      const q = explorerSearch.toLowerCase().trim();
+      result = result.filter((v) => {
+        const name = (v.name || "").toLowerCase();
+        const accent = (v.labels?.accent || "").toLowerCase();
+        const desc = (v.labels?.descriptive || "").toLowerCase();
+        const useCase = (v.labels?.use_case || "").toLowerCase();
+        return name.includes(q) || accent.includes(q) || desc.includes(q) || useCase.includes(q);
+      });
+    }
+
+    return result;
+  }, [voices, explorerSearch, explorerFilter]);
+
   return (
     <div className="batch-controls-card">
-      {/* ── Main Voice & Preset Selector (Clean, 3 primary cards) ── */}
-      <div className="controls-grid">
-        {/* 1. Estilo de Voz (Presets) */}
-        <div className="control-box flex-1">
-          <div className="control-box-header">
-            <span className="control-box-label">ESTILO DE VOZ</span>
-            <span className="preset-count-tag">{VOICE_PRESETS.length} presets</span>
+      {/* ── 1. TIPO DE VOZ (Visual Preset Cards Row) ── */}
+      <div className="presets-block">
+        <div className="block-header">
+          <div className="flex items-center gap-2">
+            <span className="block-title">TIPO DE VOZ</span>
+            <span className="block-badge">{VOICE_PRESETS.length} presets</span>
           </div>
-
-          <select
-            value={selectedPresetId}
-            onChange={(e) => handlePresetChange(e.target.value as VoicePresetId)}
-            disabled={isGenerating}
-            className="select-input preset-select"
-          >
-            {VOICE_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.emoji} {p.name}
-              </option>
-            ))}
-          </select>
-
-          <p className="control-box-description">{activePreset.description}</p>
+          <span className="block-subtitle">{activePreset.description}</span>
         </div>
 
-        {/* 2. Voz Seleccionada */}
-        <div className="control-box flex-1">
-          <div className="control-box-header">
-            <div className="flex items-center gap-1.5">
-              <span className="control-box-label">VOZ</span>
-              {isManualOverride ? (
-                <span className="badge-manual-override" title="Voz personalizada manualmente por el usuario">
-                  Selección manual
-                </span>
-              ) : (
-                <span className="badge-recommended-voice" title="Voz recomendada automáticamente para este preset">
-                  <Sparkles size={10} className="mr-0.5 inline" /> {recommendedBadgeText}
-                </span>
-              )}
-            </div>
-
-            {selectedVoice?.previewUrl && (
-              <button
-                type="button"
-                onClick={handlePlayVoicePreview}
-                className="btn-link-preview"
-                title="Escuchar muestra de voz"
-              >
-                <Volume2 size={13} className={isPlayingVoicePreview ? "text-accent animate-pulse" : ""} />
-                <span>{isPlayingVoicePreview ? "Detener" : "Escuchar muestra"}</span>
-              </button>
-            )}
+        <div className="presets-scroll-container">
+          <div className="presets-button-grid">
+            {VOICE_PRESETS.map((preset) => {
+              const isActive = preset.id === selectedPresetId;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => handlePresetClick(preset.id)}
+                  disabled={isGenerating}
+                  className={`preset-card-btn ${isActive ? "preset-card-active" : ""}`}
+                  title={preset.description}
+                >
+                  <span className="preset-card-emoji">{preset.emoji}</span>
+                  <span className="preset-card-name">{preset.name}</span>
+                  {isActive && <Check size={14} className="preset-card-check" />}
+                </button>
+              );
+            })}
           </div>
-
-          <select
-            value={selectedVoiceId}
-            onChange={(e) => onSelectVoice(e.target.value)}
-            disabled={isGenerating}
-            className="select-input voice-select"
-          >
-            {voices.length === 0 ? (
-              <option value="">Cargando voces del Gateway...</option>
-            ) : (
-              voices.map((v) => {
-                const avail = availabilityMap?.[v.voiceId];
-                const isFailed = avail?.status === "failed";
-                const isWorking = avail?.status === "working";
-                const langLabel = v.labels?.language ? `[${v.labels.language.toUpperCase()}]` : "";
-                const accentLabel = v.labels?.accent ? `· ${v.labels.accent}` : "";
-                const statusTag = isFailed
-                  ? " · [No disponible]"
-                  : isWorking
-                  ? " · ✓"
-                  : "";
-                return (
-                  <option key={v.voiceId} value={v.voiceId}>
-                    {v.name} {langLabel} {accentLabel} {statusTag}
-                  </option>
-                );
-              })
-            )}
-          </select>
-
-          <p className="control-box-description voice-meta-desc">
-            {selectedVoice ? (
-              <>
-                {selectedVoice.labels?.gender && <span className="meta-pill">{selectedVoice.labels.gender}</span>}
-                {selectedVoice.labels?.age && <span className="meta-pill">{selectedVoice.labels.age}</span>}
-                {selectedVoice.labels?.accent && <span className="meta-pill">{selectedVoice.labels.accent}</span>}
-                {selectedVoice.labels?.descriptive && (
-                  <span className="meta-pill text-accent">{selectedVoice.labels.descriptive}</span>
-                )}
-                {isSelectedVoiceFailed && (
-                  <span className="meta-pill text-rose border-rose" title={selectedVoiceAvail?.lastError || "No disponible actualmente"}>
-                    ⚠️ No disponible actualmente
-                  </span>
-                )}
-                {isSelectedVoiceWorking && (
-                  <span className="meta-pill text-emerald border-emerald" title="Verificada en esta sesión">
-                    ✓ Verificada
-                  </span>
-                )}
-              </>
-            ) : (
-              "Selecciona una voz para la síntesis"
-            )}
-          </p>
-        </div>
-
-        {/* 3. Modelo TTS */}
-        <div className="control-box flex-1">
-          <div className="control-box-header">
-            <span className="control-box-label">MODELO TTS</span>
-          </div>
-
-          <select
-            value={selectedModelId}
-            onChange={(e) => onSelectModel(e.target.value)}
-            disabled={isGenerating}
-            className="select-input model-select"
-          >
-            {models.length === 0 ? (
-              <option value="eleven_multilingual_v2">Eleven Multilingual v2</option>
-            ) : (
-              models.map((m) => (
-                <option key={m.modelId} value={m.modelId}>
-                  {m.name}
-                </option>
-              ))
-            )}
-          </select>
-
-          <p className="control-box-description model-desc">
-            {getModelDescription(selectedModelId, selectedModel?.description)}
-          </p>
         </div>
       </div>
 
-      {/* ── Formato de Salida & Configuración Avanzada ── */}
-      <div className="format-advanced-bar">
-        <div className="format-display-card">
-          <div className="format-info-left">
-            <span className="format-title-label">FORMATO DE SALIDA</span>
-            <div className="format-badge-row">
-              <span className="format-badge-value">
-                {selectedOutputFormat === "mp3_44100_128" ? "MP3 · 44.1 kHz · 128 kbps" : currentFormatObj.label}
-              </span>
-              {selectedOutputFormat === "mp3_44100_128" && (
-                <span className="badge-recommended-pill">RECOMENDADO</span>
+      {/* ── 2. VOZ RECOMENDADA Y ACTIVA (Showcase Section) ── */}
+      <div className="voice-showcase-block">
+        {isManualOverride ? (
+          /* Dual card presentation when user manually chose a different voice */
+          <div className="dual-voice-layout">
+            {/* Selected Manual Voice Card */}
+            <div className="showcase-card active-card flex-1">
+              <div className="card-top-bar">
+                <span className="status-badge badge-manual">
+                  <Sliders size={12} className="inline mr-1" /> Selección manual
+                </span>
+                <span className="status-badge badge-current">✓ Voz activa para generar</span>
+              </div>
+
+              <div className="card-main-content">
+                <div className="voice-avatar-icon active-avatar">
+                  <Mic size={24} className="text-accent" />
+                </div>
+                <div className="voice-details">
+                  <div className="voice-title-row">
+                    <h3 className="showcase-voice-name">{selectedVoice?.name || "Voz seleccionada"}</h3>
+                    {selectedVoice?.previewUrl && (
+                      <button
+                        type="button"
+                        onClick={() => handlePlayVoicePreview(selectedVoice.voiceId, selectedVoice.previewUrl!)}
+                        className={`btn-preview-circle ${playingVoiceId === selectedVoice.voiceId ? "playing" : ""}`}
+                        title="Escuchar muestra"
+                      >
+                        {playingVoiceId === selectedVoice.voiceId ? (
+                          <VolumeX size={15} className="text-accent animate-pulse" />
+                        ) : (
+                          <Volume2 size={15} />
+                        )}
+                        <span>{playingVoiceId === selectedVoice.voiceId ? "Detener" : "Escuchar"}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="voice-tags-row">
+                    <span className="tag-pill tag-accent-pill">
+                      {selectedVoice?.labels?.accent || "Acento estándar"} · {selectedVoice?.labels?.language?.toUpperCase() || "EN"}
+                    </span>
+                    {selectedVoice?.labels?.descriptive && (
+                      <span className="tag-pill">{selectedVoice.labels.descriptive}</span>
+                    )}
+                    {isSelectedVoiceFailed && (
+                      <span className="tag-pill tag-danger">⚠️ No disponible actualmente</span>
+                    )}
+                    {isSelectedVoiceWorking && (
+                      <span className="tag-pill tag-success">✓ Verificada</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {recommendedVoiceForPreset && (
+                <div className="card-footer-action">
+                  <button
+                    type="button"
+                    onClick={() => onSelectVoice(recommendedVoiceForPreset.voiceId)}
+                    className="btn-link-action"
+                  >
+                    ↺ Volver a la voz recomendada: <strong>{recommendedVoiceForPreset.name}</strong>
+                  </button>
+                </div>
               )}
             </div>
-          </div>
 
-          <div className="format-info-right">
-            <button
-              type="button"
-              onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-              className="btn-toggle-advanced"
-              title="Abrir u ocultar configuración avanzada de formato"
-            >
-              <Settings size={14} className="mr-1.5" />
-              <span>CONFIGURACIÓN AVANZADA</span>
-              {isAdvancedOpen ? <ChevronUp size={14} className="ml-1" /> : <ChevronDown size={14} className="ml-1" />}
-            </button>
-          </div>
-        </div>
+            {/* Recommended Voice for current preset */}
+            {recommendedVoiceForPreset && (
+              <div className="showcase-card ghost-card flex-1">
+                <div className="card-top-bar">
+                  <span className="status-badge badge-recommended">
+                    <Sparkles size={12} className="inline mr-1 text-accent" /> Recomendada por preset: {activePreset.name}
+                  </span>
+                </div>
 
-        {/* Collapsible Advanced Panel */}
-        {isAdvancedOpen && (
-          <div className="advanced-collapsible-panel animate-slide-down">
-            <div className="advanced-grid">
-              <div className="form-group flex-1">
-                <label className="field-label">FORMATO DE AUDIO</label>
-                <select
-                  value={selectedOutputFormat}
-                  onChange={(e) => onSelectOutputFormat(e.target.value)}
-                  disabled={isGenerating}
-                  className="select-input"
-                >
-                  {formats.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="advanced-hint">
-                  El formato estándar MP3 44.1kHz 128kbps es el recomendado por GhostAI Studio para balance óptimo de
-                  calidad y peso de archivo.
+                <div className="card-main-content">
+                  <div className="voice-avatar-icon">
+                    <Mic size={24} className="text-dim" />
+                  </div>
+                  <div className="voice-details">
+                    <div className="voice-title-row">
+                      <h3 className="showcase-voice-name">{recommendedVoiceForPreset.name}</h3>
+                      {recommendedVoiceForPreset.previewUrl && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handlePlayVoicePreview(recommendedVoiceForPreset.voiceId, recommendedVoiceForPreset.previewUrl!)
+                          }
+                          className={`btn-preview-circle ${playingVoiceId === recommendedVoiceForPreset.voiceId ? "playing" : ""}`}
+                          title="Escuchar muestra recomendada"
+                        >
+                          {playingVoiceId === recommendedVoiceForPreset.voiceId ? (
+                            <VolumeX size={15} className="text-accent animate-pulse" />
+                          ) : (
+                            <Volume2 size={15} />
+                          )}
+                          <span>{playingVoiceId === recommendedVoiceForPreset.voiceId ? "Detener" : "Escuchar"}</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="voice-tags-row">
+                      <span className="tag-pill">
+                        {recommendedVoiceForPreset.labels?.accent || "Acento estándar"} ·{" "}
+                        {recommendedVoiceForPreset.labels?.language?.toUpperCase() || "EN"}
+                      </span>
+                      {recommendedVoiceForPreset.labels?.descriptive && (
+                        <span className="tag-pill">{recommendedVoiceForPreset.labels.descriptive}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card-footer-action">
+                  <button
+                    type="button"
+                    onClick={() => onSelectVoice(recommendedVoiceForPreset.voiceId)}
+                    className="btn-select-recommended-btn"
+                  >
+                    Usar voz recomendada
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Recommended Voice matches Selected Voice */
+          <div className="showcase-card active-card single-showcase">
+            <div className="card-top-bar">
+              <div className="flex items-center gap-2">
+                <span className="status-badge badge-recommended">
+                  <Sparkles size={12} className="inline mr-1 text-accent" />
+                  {selectedPresetId === "espanol_latino" ? "Voz recomendada para español" : "Voz recomendada"}
                 </span>
+                <span className="status-badge badge-current">✓ Seleccionada y activa</span>
+              </div>
+              <span className="preset-pill-tag">
+                {activePreset.emoji} {activePreset.name}
+              </span>
+            </div>
+
+            <div className="card-main-content">
+              <div className="voice-avatar-icon active-avatar">
+                <Mic size={26} className="text-accent" />
+              </div>
+              <div className="voice-details">
+                <div className="voice-title-row">
+                  <h3 className="showcase-voice-name text-xl">
+                    {selectedVoice?.name || "Cargando voces del Gateway..."}
+                  </h3>
+                  {selectedVoice?.previewUrl && (
+                    <button
+                      type="button"
+                      onClick={() => handlePlayVoicePreview(selectedVoice.voiceId, selectedVoice.previewUrl!)}
+                      className={`btn-preview-circle ${playingVoiceId === selectedVoice.voiceId ? "playing" : ""}`}
+                      title="Escuchar muestra"
+                    >
+                      {playingVoiceId === selectedVoice.voiceId ? (
+                        <VolumeX size={15} className="text-accent animate-pulse" />
+                      ) : (
+                        <Volume2 size={15} />
+                      )}
+                      <span>{playingVoiceId === selectedVoice.voiceId ? "Detener muestra" : "Escuchar muestra"}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="voice-tags-row">
+                  <span className="tag-pill tag-accent-pill">
+                    {selectedVoice?.labels?.accent || "Acento estándar"} · {selectedVoice?.labels?.language?.toUpperCase() || "EN"}
+                  </span>
+                  {selectedVoice?.labels?.descriptive && (
+                    <span className="tag-pill">{selectedVoice.labels.descriptive}</span>
+                  )}
+                  {selectedVoice?.labels?.use_case && (
+                    <span className="tag-pill">{selectedVoice.labels.use_case}</span>
+                  )}
+                  {isSelectedVoiceFailed && (
+                    <span className="tag-pill tag-danger">⚠️ No disponible actualmente</span>
+                  )}
+                  {isSelectedVoiceWorking && (
+                    <span className="tag-pill tag-success">✓ Verificada en esta sesión</span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* Explore All Voices Button */}
+        <div className="explore-all-row">
+          <button
+            type="button"
+            onClick={() => setIsExplorerOpen(true)}
+            disabled={isGenerating || voices.length === 0}
+            className="btn-explore-catalog"
+          >
+            <Search size={15} className="mr-2" />
+            <span>EXPLORAR TODAS LAS VOCES ({voices.length})</span>
+          </button>
+        </div>
       </div>
 
-      {/* ── Action buttons row ── */}
+      {/* ── 3. MODELO TTS & FORMATO DE SALIDA (Two Cards with Accordion) ── */}
+      <div className="tech-config-row">
+        {/* Model Card */}
+        <div className="tech-box">
+          <div className="tech-box-header">
+            <span className="tech-label">MODELO TTS</span>
+          </div>
+          <div className="tech-box-body">
+            <h4 className="tech-title">{selectedModel?.name || "Eleven Multilingual v2"}</h4>
+            <p className="tech-desc">
+              {selectedModelId === "eleven_multilingual_v2"
+                ? "Recomendado para narraciones multilingües y español."
+                : getModelDescription(selectedModelId, selectedModel?.description)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsModelAdvancedOpen(!isModelAdvancedOpen)}
+            className="btn-tech-toggle"
+          >
+            <Settings size={13} className="mr-1" />
+            <span>Configuración avanzada</span>
+            {isModelAdvancedOpen ? <ChevronUp size={13} className="ml-1" /> : <ChevronDown size={13} className="ml-1" />}
+          </button>
+
+          {isModelAdvancedOpen && (
+            <div className="tech-accordion-body animate-slide-down">
+              <label className="field-subhead">MODELOS ALTERNATIVOS DISPONIBLES</label>
+              <select
+                value={selectedModelId}
+                onChange={(e) => onSelectModel(e.target.value)}
+                disabled={isGenerating}
+                className="select-input"
+              >
+                {models.map((m) => (
+                  <option key={m.modelId} value={m.modelId}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Output Format Card */}
+        <div className="tech-box">
+          <div className="tech-box-header">
+            <span className="tech-label">FORMATO DE SALIDA</span>
+            <span className="tag-rec-mini">✓ RECOMENDADO</span>
+          </div>
+          <div className="tech-box-body">
+            <h4 className="tech-title">
+              {selectedOutputFormat === "mp3_44100_128" ? "MP3 · 44.1 kHz · 128 kbps" : currentFormatObj.label}
+            </h4>
+            <p className="tech-desc">
+              Balance óptimo de fidelidad acústica y ligereza de archivo para GhostAI.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsFormatAdvancedOpen(!isFormatAdvancedOpen)}
+            className="btn-tech-toggle"
+          >
+            <Settings size={13} className="mr-1" />
+            <span>Configuración avanzada</span>
+            {isFormatAdvancedOpen ? <ChevronUp size={13} className="ml-1" /> : <ChevronDown size={13} className="ml-1" />}
+          </button>
+
+          {isFormatAdvancedOpen && (
+            <div className="tech-accordion-body animate-slide-down">
+              <label className="field-subhead">FORMATOS DE AUDIO COMPATIBLES</label>
+              <select
+                value={selectedOutputFormat}
+                onChange={(e) => onSelectOutputFormat(e.target.value)}
+                disabled={isGenerating}
+                className="select-input"
+              >
+                {formats.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label} {f.recommended ? "(Recomendado)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 4. ACTION BUTTONS ROW ── */}
       <div className="controls-actions-row">
         <div className="actions-left">
           {/* Apply to Pending */}
@@ -357,7 +538,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
             onClick={handleApplyClick}
             disabled={isGenerating || totalCount === 0}
             className="btn-secondary"
-            title="Aplica el estilo, voz y modelo actual a todas las narraciones pendientes"
+            title="Aplica la voz y modelo actual a todas las narraciones pendientes"
           >
             {appliedNotice ? <Check size={14} className="text-emerald mr-1" /> : <Sliders size={14} className="mr-1" />}
             <span>{appliedNotice ? "¡Aplicado a Pendientes!" : "Aplicar a Pendientes"}</span>
@@ -419,6 +600,154 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           </button>
         </div>
       </div>
+
+      {/* ── 5. VOICE EXPLORER MODAL (Visual Card Grid) ── */}
+      {isExplorerOpen && (
+        <div className="explorer-modal-backdrop" onClick={() => setIsExplorerOpen(false)}>
+          <div className="explorer-modal-dialog animate-scale-up" onClick={(e) => e.stopPropagation()}>
+            <div className="explorer-dialog-header">
+              <div>
+                <h3 className="explorer-dialog-title">Catálogo Completo de Voces</h3>
+                <p className="explorer-dialog-desc">
+                  Selecciona manualmente cualquier voz de ElevenLabs disponible en tu cuenta
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExplorerOpen(false)}
+                className="btn-dialog-close"
+                title="Cerrar catálogo"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="explorer-toolbar">
+              <div className="explorer-search-field">
+                <Search size={15} className="search-field-icon" />
+                <input
+                  type="text"
+                  value={explorerSearch}
+                  onChange={(e) => setExplorerSearch(e.target.value)}
+                  placeholder="Buscar voz por nombre, acento o estilo..."
+                  className="search-field-input"
+                  autoFocus
+                />
+                {explorerSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setExplorerSearch("")}
+                    className="btn-clear-search-input"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <div className="explorer-filter-pills">
+                <button
+                  type="button"
+                  onClick={() => setExplorerFilter("all")}
+                  className={`pill-btn ${explorerFilter === "all" ? "pill-btn-active" : ""}`}
+                >
+                  Todas ({voices.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExplorerFilter("es")}
+                  className={`pill-btn ${explorerFilter === "es" ? "pill-btn-active" : ""}`}
+                >
+                  Español / Latino
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExplorerFilter("en")}
+                  className={`pill-btn ${explorerFilter === "en" ? "pill-btn-active" : ""}`}
+                >
+                  Multilingüe / EN
+                </button>
+              </div>
+            </div>
+
+            {/* Voices Grid */}
+            <div className="explorer-cards-container">
+              {filteredExplorerVoices.length === 0 ? (
+                <div className="explorer-empty-notice">
+                  <p>No se encontraron voces que coincidan con la búsqueda.</p>
+                </div>
+              ) : (
+                <div className="explorer-voice-grid">
+                  {filteredExplorerVoices.map((voice) => {
+                    const isSelected = voice.voiceId === selectedVoiceId;
+                    const isRecommended = recommendedVoiceForPreset?.voiceId === voice.voiceId;
+                    const avail = availabilityMap?.[voice.voiceId];
+                    const isFailed = avail?.status === "failed";
+                    const isWorking = avail?.status === "working";
+
+                    return (
+                      <div
+                        key={voice.voiceId}
+                        onClick={() => {
+                          onSelectVoice(voice.voiceId);
+                          setIsExplorerOpen(false);
+                        }}
+                        className={`explorer-voice-card ${isSelected ? "card-selected" : ""} ${isFailed ? "card-failed" : ""}`}
+                      >
+                        <div className="card-top">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (voice.previewUrl) {
+                                handlePlayVoicePreview(voice.voiceId, voice.previewUrl);
+                              }
+                            }}
+                            disabled={!voice.previewUrl}
+                            className={`btn-card-audio ${playingVoiceId === voice.voiceId ? "playing" : ""}`}
+                            title={voice.previewUrl ? "Escuchar muestra" : "Sin muestra disponible"}
+                          >
+                            {playingVoiceId === voice.voiceId ? (
+                              <VolumeX size={14} className="text-accent animate-pulse" />
+                            ) : (
+                              <Volume2 size={14} />
+                            )}
+                          </button>
+
+                          <div className="card-headings">
+                            <h4 className="card-voice-name">{voice.name}</h4>
+                            <span className="card-voice-meta">
+                              {voice.labels?.language?.toUpperCase() || "EN"} · {voice.labels?.accent || "Standard"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="card-badges-bottom">
+                          {isRecommended && (
+                            <span className="badge-tag-rec">RECOMENDADA</span>
+                          )}
+                          {isSelected && (
+                            <span className="badge-tag-sel">✓ SELECCIONADA</span>
+                          )}
+                          {isFailed && (
+                            <span className="badge-tag-fail">⚠️ No disponible</span>
+                          )}
+                          {isWorking && (
+                            <span className="badge-tag-work">✓ Verificada</span>
+                          )}
+                          {voice.labels?.descriptive && (
+                            <span className="badge-tag-desc">{voice.labels.descriptive}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

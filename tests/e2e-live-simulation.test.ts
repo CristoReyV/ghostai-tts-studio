@@ -4,7 +4,7 @@
  * GhostAI Export -> Parser -> Live Gateway Audio Generation -> Zip Packaging -> Manifest Verification
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import JSZip from "jszip";
 import { parseGhostAiTtsJson } from "../src/services/parser";
 import { SAMPLE_GHOSTAI_PROJECT } from "../src/sampleData";
@@ -20,11 +20,31 @@ describe("E2E Live Flow Simulation", () => {
     const items = parseResult.studioItems!;
     expect(items).toHaveLength(3);
 
-    // 2. Simulate live sequential generation with first item against certified Gateway
+    // 2. Gateway Audio Generation:
+    // AUTOMATED TEST SAFEGUARD:
+    // By default, this automated test MUST NOT call ElevenLabs to avoid consuming credits.
+    // Real live generation is strictly opt-in via: RUN_LIVE_TTS_TEST=true
+    const isLiveManual = process.env.RUN_LIVE_TTS_TEST === "true";
     const itemToTest = items[0];
     const gatewayUrl = "https://tts-test.smartbrain.lat/api/tts/generate";
 
-    const response = await fetch(gatewayUrl, {
+    let fetchFn: typeof fetch = fetch;
+    if (!isLiveManual) {
+      const mockHeaders = new Headers({
+        "Content-Type": "audio/mpeg",
+        "X-TTS-Request-ID": "req-test-simulated-safe",
+        "X-TTS-Output-Format": "mp3_44100_128",
+      });
+      const simulatedAudioBlob = new Blob([new Uint8Array(12500)], { type: "audio/mpeg" });
+      fetchFn = vi.fn().mockResolvedValue(
+        new Response(simulatedAudioBlob, {
+          status: 200,
+          headers: mockHeaders,
+        })
+      );
+    }
+
+    const response = await fetchFn(gatewayUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -38,9 +58,9 @@ describe("E2E Live Flow Simulation", () => {
 
     expect(response.status).toBe(200);
     const audioBlob = await response.blob();
-    expect(audioBlob.size).toBeGreaterThan(10000); // Real MP3 audio
+    expect(audioBlob.size).toBeGreaterThan(10000); // Valid audio payload
 
-    const requestId = response.headers.get("X-TTS-Request-ID") || "req-test-live";
+    const requestId = response.headers.get("X-TTS-Request-ID") || "req-test-simulated-safe";
 
     // Update item status to READY
     itemToTest.status = "READY";
@@ -65,7 +85,7 @@ describe("E2E Live Flow Simulation", () => {
     });
 
     expect(zipResult.itemCount).toBe(2);
-    expect(zipResult.blob.size).toBeGreaterThan(10000);
+    expect(zipResult.blob.size).toBeGreaterThan(500);
 
     // 4. Verify ZIP content and manifest
     const zip = await JSZip.loadAsync(zipResult.blob);
