@@ -83,7 +83,7 @@ export interface OutputPackageItem {
 }
 
 export interface OutputPackageManifest {
-  format: "ghostai-tts-package";
+  format: "ghostai-tts";
   version: "1.0";
   project: GhostAiTtsProject;
   generatedWith: {

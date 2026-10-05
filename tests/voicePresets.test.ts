@@ -341,6 +341,8 @@ describe("Voice Presets Suite", () => {
     const manifestFile = zip.file("manifest.json");
     expect(manifestFile).not.toBeNull();
     const manifest = JSON.parse(await manifestFile!.async("string"));
+    expect(manifest.format).toBe("ghostai-tts");
+    expect(manifest.version).toBe("1.0");
     // voiceId must strictly match input, untouched
     expect(manifest.items[0].voiceId).toBe("test_voice_custom_123");
     expect(manifest.items[0].modelId).toBe("eleven_flash_v2_5");

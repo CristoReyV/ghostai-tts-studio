@@ -95,7 +95,7 @@ describe("E2E Live Flow Simulation", () => {
     const manifestText = await manifestFile!.async("string");
     const manifest = JSON.parse(manifestText);
 
-    expect(manifest.format).toBe("ghostai-tts-package");
+    expect(manifest.format).toBe("ghostai-tts");
     expect(manifest.version).toBe("1.0");
     expect(manifest.project.name).toBe("Lia y el Faro Encantado");
     expect(manifest.generatedWith.provider).toBe("elevenlabs");

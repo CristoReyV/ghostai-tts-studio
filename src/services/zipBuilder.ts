@@ -83,7 +83,7 @@ export async function buildGhostAiTtsPackage(options: BuildZipOptions): Promise<
   });
 
   const manifest: OutputPackageManifest = {
-    format: "ghostai-tts-package",
+    format: "ghostai-tts",
     version: "1.0",
     project: options.project,
     generatedWith: {

@@ -76,7 +76,7 @@ describe("buildGhostAiTtsPackage", () => {
     expect(manifestJson).toBeDefined();
 
     const manifest = JSON.parse(manifestJson!);
-    expect(manifest.format).toBe("ghostai-tts-package");
+    expect(manifest.format).toBe("ghostai-tts");
     expect(manifest.version).toBe("1.0");
     expect(manifest.project.name).toBe("Cuentos del Mar");
     expect(manifest.generatedWith.provider).toBe("elevenlabs");
@@ -91,6 +91,54 @@ describe("buildGhostAiTtsPackage", () => {
     expect(manifest.items[1].id).toBe("narr_02");
     expect(manifest.items[1].file).toBe("audio/narration_002.mp3");
     expect(manifest.items[1].customMeta).toBe("tormenta");
+  });
+
+  it("strictly enforces canonical manifest contract matching GhostAI importer (format: ghostai-tts, version: 1.0)", async () => {
+    const singleReadyItem: StudioNarrationItem[] = [
+      {
+        id: "narr_scene1_001",
+        sceneId: "scene_cliff_arrival",
+        sceneIndex: 1,
+        text: "Lia llegó al faro antes del anochecer.",
+        voiceId: "CaJslL1xziwefCeTNzHv",
+        modelId: "eleven_multilingual_v2",
+        status: "READY",
+        audioBlob: new Blob(["dummy-audio-content"], { type: "audio/mpeg" }),
+        duration: 4.25,
+        requestId: "req-contract-test-999",
+      },
+    ];
+
+    const packageResult = await buildGhostAiTtsPackage({
+      project: { name: "Lia y el Faro", exportedAt: "2026-10-05T12:00:00Z" },
+      items: singleReadyItem,
+      includeOnlyReady: true,
+    });
+
+    expect(packageResult.fileName).toBe("lia_y_el_faro-tts-package.zip");
+    expect(packageResult.blob).toBeInstanceOf(Blob);
+
+    // Open and inspect manifest.json inside the ZIP
+    const zip = await JSZip.loadAsync(packageResult.blob);
+    const manifestEntry = zip.file("manifest.json");
+    expect(manifestEntry).not.toBeNull();
+
+    const manifestContent = await manifestEntry!.async("string");
+    const manifest = JSON.parse(manifestContent);
+
+    // Strict contract assertions matching GhostAI importer:
+    expect(manifest.format).toBe("ghostai-tts");
+    expect(manifest.version).toBe("1.0");
+    expect(manifest.project.name).toBe("Lia y el Faro");
+    expect(manifest.generatedWith.provider).toBe("elevenlabs");
+    expect(manifest.items).toHaveLength(1);
+    expect(manifest.items[0].id).toBe("narr_scene1_001");
+    expect(manifest.items[0].sceneId).toBe("scene_cliff_arrival");
+    expect(manifest.items[0].file).toBe("audio/narration_001.mp3");
+    expect(manifest.items[0].voiceId).toBe("CaJslL1xziwefCeTNzHv");
+    expect(manifest.items[0].modelId).toBe("eleven_multilingual_v2");
+    expect(manifest.items[0].duration).toBe(4.25);
+    expect(manifest.items[0].requestId).toBe("req-contract-test-999");
   });
 
   it("throws error if no items are ready to export", async () => {
