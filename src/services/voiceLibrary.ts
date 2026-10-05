@@ -270,8 +270,22 @@ export function translateAccent(accent: string | undefined): string {
   switch (lower) {
     case "latin american":
       return "Latinoamericano";
+    case "peninsular":
+    case "spanish":
+      return "España / Peninsular";
+    case "mexican":
+      return "Mexicano";
     case "colombian":
       return "Colombiano";
+    case "argentine":
+    case "argentinian":
+      return "Argentino";
+    case "chilean":
+      return "Chileno";
+    case "peruvian":
+      return "Peruano";
+    case "venezuelan":
+      return "Venezolano";
     case "american":
       return "Americano";
     case "british":
@@ -280,12 +294,77 @@ export function translateAccent(accent: string | undefined): string {
       return "Australiano";
     case "brazilian":
       return "Brasileño";
-    case "mexican":
-      return "Mexicano";
-    case "spanish":
-      return "Castellano / Peninsular";
     default:
       return accent.charAt(0).toUpperCase() + accent.slice(1);
+  }
+}
+
+export const COMMON_LANGUAGE_ACCENTS: Record<string, string[]> = {
+  es: [
+    "latin american",
+    "peninsular",
+    "mexican",
+    "colombian",
+    "argentine",
+    "chilean",
+    "peruvian",
+    "venezuelan"
+  ],
+  en: [
+    "american",
+    "british",
+    "australian",
+    "canadian",
+    "irish",
+    "indian"
+  ],
+  pt: [
+    "brazilian",
+    "european"
+  ]
+};
+
+export interface UseCaseOption {
+  id: string;
+  label: string;
+  icon: string;
+}
+
+export const USE_CASE_OPTIONS: UseCaseOption[] = [
+  { id: "all", label: "Todos", icon: "✨" },
+  { id: "narrative_story", label: "Narración", icon: "📖" },
+  { id: "conversational", label: "Conversacional", icon: "🎙️" },
+  { id: "social_media", label: "Redes sociales", icon: "📱" },
+  { id: "informative_educational", label: "Educación", icon: "🎓" },
+  { id: "advertisement", label: "Publicidad", icon: "📢" },
+  { id: "characters_animation", label: "Personajes", icon: "🎭" },
+  { id: "entertainment_tv", label: "Entretenimiento", icon: "🎬" },
+];
+
+export function translateUseCase(useCase: string | null | undefined): string {
+  if (!useCase) return "General";
+  const lower = useCase.toLowerCase().trim();
+  switch (lower) {
+    case "narrative_story":
+    case "narration":
+      return "Narración";
+    case "conversational":
+      return "Conversacional";
+    case "social_media":
+      return "Redes sociales";
+    case "informative_educational":
+    case "educational":
+      return "Educación";
+    case "advertisement":
+      return "Publicidad";
+    case "characters_animation":
+    case "characters":
+      return "Personajes";
+    case "entertainment_tv":
+    case "entertainment":
+      return "Entretenimiento";
+    default:
+      return useCase.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }
 }
 

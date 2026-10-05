@@ -100,3 +100,62 @@ export interface GatewayHealth {
   provider: string;
   configured: boolean;
 }
+
+export interface VoiceLibraryVoice {
+  voiceId: string;
+  publicOwnerId: string | null;
+  name: string;
+  language: string | null;
+  locale: string | null;
+  accent: string | null;
+  gender: string | null;
+  age: string | null;
+  useCase: string | null;
+  descriptive: string | null;
+  description: string | null;
+  category: string | null;
+  previewUrl: string | null;
+  clonedByCount: number;
+  usageCharacterCount1y: number;
+  featured: boolean;
+  freeUsersAllowed: boolean;
+  liveModerationEnabled: boolean;
+  noticePeriod: number | null;
+  rate: number | null;
+  verifiedLanguages: { language: string; modelId: string }[];
+}
+
+export interface VoiceLibraryResponse {
+  voices: VoiceLibraryVoice[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  totalCount: number;
+}
+
+export interface VoiceLibraryQueryParams {
+  language?: string;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  accent?: string;
+  locale?: string;
+  gender?: string;
+  age?: string;
+  useCases?: string;
+  sort?: string;
+}
+
+export interface AddSharedVoiceRequest {
+  voiceId: string;
+  publicOwnerId: string;
+  name: string;
+}
+
+export interface AddSharedVoiceResponse {
+  ok: boolean;
+  voiceId: string;
+  name?: string;
+  category?: string;
+  [key: string]: unknown;
+}

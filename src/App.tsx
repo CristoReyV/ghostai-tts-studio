@@ -23,7 +23,6 @@ import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuild
 import {
   type OfficialCategory,
   type VoiceAvailabilityMap,
-  getRecommendedVoice,
   formatVoiceAvailabilityError,
 } from "./services/voiceLibrary";
 import { Header } from "./components/Header";
@@ -88,15 +87,12 @@ export const App: React.FC = () => {
       setVoices(loadedVoices);
       setModels(loadedModels);
 
-      // Pick default voice if not set based on active criteria (Español + Narración)
+      // Pick default voice if not set based on active language (Spanish preferred)
       if (loadedVoices.length > 0 && !selectedVoiceId) {
-        const recommended =
-          getRecommendedVoice(
-            loadedVoices,
-            { language: selectedLanguage, category: selectedCategory },
-            voiceAvailability
-          ) || loadedVoices[0];
-        setSelectedVoiceId(recommended.voiceId);
+        const langVoice = loadedVoices.find(
+          (v) => (v.labels?.language || "").toLowerCase() === selectedLanguage.toLowerCase()
+        );
+        setSelectedVoiceId(langVoice ? langVoice.voiceId : loadedVoices[0].voiceId);
       }
     } catch (err) {
       console.warn("Error conectando al Gateway:", err);
@@ -110,7 +106,15 @@ export const App: React.FC = () => {
     } finally {
       setCheckingHealth(false);
     }
-  }, [selectedVoiceId, selectedLanguage, selectedCategory, voiceAvailability]);
+  }, [selectedVoiceId, selectedLanguage]);
+
+  // When a shared voice is added from Voice Library, append to account collection
+  const handleVoiceAdded = useCallback((newVoice: GatewayVoice) => {
+    setVoices((prev) => {
+      if (prev.some((v) => v.voiceId === newVoice.voiceId)) return prev;
+      return [newVoice, ...prev];
+    });
+  }, []);
 
   useEffect(() => {
     loadGatewayData();
@@ -435,6 +439,7 @@ export const App: React.FC = () => {
                 onSelectVoice={setSelectedVoiceId}
                 onSelectModel={setSelectedModelId}
                 onSelectOutputFormat={setSelectedOutputFormat}
+                onVoiceAdded={handleVoiceAdded}
                 onApplyToPending={handleApplyToPending}
                 isGenerating={isGenerating}
                 onGenerateAll={handleGenerateAll}

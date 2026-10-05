@@ -3,7 +3,16 @@
  * Client for the certified GhostAI TTS Gateway backend.
  */
 
-import type { GatewayHealth, GatewayModel, GatewayVoice, GhostAiVoiceSettings } from "../types/tts";
+import type {
+  GatewayHealth,
+  GatewayModel,
+  GatewayVoice,
+  GhostAiVoiceSettings,
+  VoiceLibraryResponse,
+  VoiceLibraryQueryParams,
+  AddSharedVoiceRequest,
+  AddSharedVoiceResponse,
+} from "../types/tts";
 
 export function getGatewayBaseUrl(): string {
   const envUrl = import.meta.env.VITE_TTS_GATEWAY_URL as string | undefined;
@@ -164,4 +173,80 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     outputFormat,
     durationMs,
   };
+}
+
+/**
+ * Fetches shared voices catalog from the Gateway Voice Library endpoint.
+ * GET /api/tts/voice-library
+ */
+export async function fetchVoiceLibrary(
+  params: VoiceLibraryQueryParams = {},
+  signal?: AbortSignal
+): Promise<VoiceLibraryResponse> {
+  const base = getGatewayBaseUrl();
+  const searchParams = new URLSearchParams();
+
+  if (params.language) searchParams.set("language", params.language);
+  if (typeof params.page === "number") searchParams.set("page", String(params.page));
+  if (typeof params.pageSize === "number") searchParams.set("page_size", String(params.pageSize));
+  if (params.search) searchParams.set("search", params.search);
+  if (params.accent) searchParams.set("accent", params.accent);
+  if (params.locale) searchParams.set("locale", params.locale);
+  if (params.gender) searchParams.set("gender", params.gender);
+  if (params.age) searchParams.set("age", params.age);
+  if (params.useCases) searchParams.set("use_cases", params.useCases);
+  if (params.sort) searchParams.set("sort", params.sort);
+
+  const qs = searchParams.toString();
+  const url = `${base}/api/tts/voice-library${qs ? `?${qs}` : ""}`;
+
+  const res = await fetch(url, { method: "GET", signal });
+  if (!res.ok) {
+    let errMsg = `Error ${res.status} al consultar Voice Library`;
+    let errCode = "VOICE_LIBRARY_FAILED";
+    try {
+      const errBody = await res.json();
+      if (errBody?.error?.message) errMsg = errBody.error.message;
+      if (errBody?.error?.code) errCode = errBody.error.code;
+    } catch (_) {}
+    throw new TtsGatewayError(errMsg, errCode, res.status);
+  }
+
+  const data = await res.json();
+  return data as VoiceLibraryResponse;
+}
+
+/**
+ * Adds a shared voice to the account collection via Gateway.
+ * POST /api/tts/voices/shared/add
+ */
+export async function addSharedVoiceToAccount(
+  request: AddSharedVoiceRequest,
+  signal?: AbortSignal
+): Promise<AddSharedVoiceResponse> {
+  const base = getGatewayBaseUrl();
+  const url = `${base}/api/tts/voices/shared/add`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    let errMsg = `Error ${res.status} al añadir voz a tu colección`;
+    let errCode = "ADD_SHARED_VOICE_FAILED";
+    try {
+      const errBody = await res.json();
+      if (errBody?.error?.message) errMsg = errBody.error.message;
+      if (errBody?.error?.code) errCode = errBody.error.code;
+    } catch (_) {}
+    throw new TtsGatewayError(errMsg, errCode, res.status);
+  }
+
+  const data = await res.json();
+  return data as AddSharedVoiceResponse;
 }
