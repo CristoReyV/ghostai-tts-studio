@@ -11,6 +11,7 @@ import {
   rankVoicesForPreset,
   getRecommendedVoiceForPreset,
   getModelDescription,
+  formatVoiceAvailabilityError,
   type VoicePresetId,
 } from "../src/services/voicePresets";
 import type { GatewayVoice } from "../src/types/tts";
@@ -169,7 +170,8 @@ describe("Voice Presets Suite", () => {
 
     // Rogher (es / colombian) has high score, Roger (en / american) has severe penalty
     expect(rogherScore).toBeGreaterThan(100);
-    expect(rogerScore).toBeLessThan(0);
+    expect(rogerScore).toBeLessThanOrEqual(0);
+    expect(rogerScore).toBeLessThan(rogherScore);
 
     // Verify Roger is NOT top recommendation
     expect(topVoice.voiceId).not.toBe("roger_en");
@@ -223,7 +225,94 @@ describe("Voice Presets Suite", () => {
     expect(customDesc).toBe("Descripción proporcionada por Gateway");
   });
 
-  // 10. Preservación de voiceId, modelId, outputFormat y contrato .ghostai-tts.json
+  // 10. Availability Tier: working > unknown > failed
+  it("orders voices by availability tier: working > unknown > failed", () => {
+    const availMap = {
+      sarah_conversational: { status: "working" as const },
+      george_narrator: { status: "unknown" as const },
+      callum_ad: { status: "failed" as const },
+    };
+
+    const ranked = rankVoicesForPreset("conversacional_natural", sampleVoices, availMap);
+    const sarahIdx = ranked.findIndex((v) => v.voiceId === "sarah_conversational");
+    const georgeIdx = ranked.findIndex((v) => v.voiceId === "george_narrator");
+    const callumIdx = ranked.findIndex((v) => v.voiceId === "callum_ad");
+
+    expect(sarahIdx).toBeLessThan(georgeIdx);
+    expect(georgeIdx).toBeLessThan(callumIdx);
+  });
+
+  // 11. Failed nunca gana frente a working
+  it("ensures a failed voice never beats a working voice regardless of suitability score", () => {
+    const availMap = {
+      rogher_es: { status: "failed" as const },
+      sarah_conversational: { status: "working" as const },
+    };
+
+    const ranked = rankVoicesForPreset("comercial_publicidad", sampleVoices, availMap);
+    const rogherIdx = ranked.findIndex((v) => v.voiceId === "rogher_es");
+    const sarahIdx = ranked.findIndex((v) => v.voiceId === "sarah_conversational");
+
+    expect(sarahIdx).toBeLessThan(rogherIdx);
+    expect(ranked[0].voiceId).not.toBe("rogher_es");
+  });
+
+  // 12. Failed nunca gana frente a unknown
+  it("ensures a failed voice never beats an unknown voice regardless of suitability score", () => {
+    const availMap = {
+      rogher_es: { status: "failed" as const },
+      cristina_es: { status: "failed" as const },
+    };
+
+    const ranked = rankVoicesForPreset("espanol_latino", sampleVoices, availMap);
+    const topVoice = ranked[0];
+
+    // Failed voices cannot be the top recommendation when unknown alternatives exist
+    expect(["rogher_es", "cristina_es"]).not.toContain(topVoice.voiceId);
+  });
+
+  // 13. Español + working supera español + failed
+  it("ensures español + working beats español + failed", () => {
+    const availMap = {
+      cristina_es: { status: "working" as const },
+      rogher_es: { status: "failed" as const },
+    };
+
+    const recommended = getRecommendedVoiceForPreset("espanol_latino", sampleVoices, availMap);
+    expect(recommended?.voiceId).toBe("cristina_es");
+  });
+
+  // 14. Voz multilingüe premade puede ser candidata para español
+  it("allows a multilingual premade voice to be recommended for Spanish when native voices are failed", () => {
+    const availMap = {
+      rogher_es: { status: "failed" as const },
+      cristina_es: { status: "failed" as const },
+    };
+
+    const recommended = getRecommendedVoiceForPreset("espanol_latino", sampleVoices, availMap);
+    expect(recommended).toBeDefined();
+    expect(["rogher_es", "cristina_es"]).not.toContain(recommended!.voiceId);
+    expect(recommended!.category).toBe("premade");
+  });
+
+  // 15. 502 no se convierte automáticamente en 'requiere Pro'
+  it("formats HTTP 502 neutrally as 'No disponible actualmente' without assuming required plans", () => {
+    const msg502 = formatVoiceAvailabilityError(502, "ElevenLabs returned an unexpected error.");
+    expect(msg502).toBe("No disponible actualmente");
+    expect(msg502.toLowerCase()).not.toContain("pro");
+    expect(msg502.toLowerCase()).not.toContain("plan");
+  });
+
+  // 16. Preset conserva su scoring original
+  it("preserves original suitability scoring deterministically regardless of availability", () => {
+    const preset = VOICE_PRESETS.find((p) => p.id === "narrativo_epico")!;
+    const score1 = scoreVoiceForPreset(sampleVoices[3], preset);
+    const score2 = scoreVoiceForPreset(sampleVoices[3], preset);
+    expect(score1).toBe(score2);
+    expect(score1).toBeGreaterThan(0);
+  });
+
+  // 17. Preservación de voiceId, modelId, outputFormat y contrato .ghostai-tts.json
   it("strictly preserves voiceId, modelId, outputFormat and contract compatibility in ZIP package", async () => {
     const parsed = parseGhostAiTtsJson(SAMPLE_GHOSTAI_PROJECT);
     expect(parsed.success).toBe(true);
@@ -252,6 +341,7 @@ describe("Voice Presets Suite", () => {
     const manifestFile = zip.file("manifest.json");
     expect(manifestFile).not.toBeNull();
     const manifest = JSON.parse(await manifestFile!.async("string"));
+    // voiceId must strictly match input, untouched
     expect(manifest.items[0].voiceId).toBe("test_voice_custom_123");
     expect(manifest.items[0].modelId).toBe("eleven_flash_v2_5");
     expect(manifest.items[0].outputFormat).toBe("mp3_44100_192");

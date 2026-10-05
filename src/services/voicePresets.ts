@@ -179,8 +179,30 @@ export const VOICE_PRESETS: VoicePreset[] = [
   },
 ];
 
+export type VoiceAvailabilityStatus = "unknown" | "working" | "failed";
+
+export interface VoiceAvailabilityRecord {
+  status: VoiceAvailabilityStatus;
+  lastStatus?: number;
+  lastError?: string;
+  updatedAt?: number;
+}
+
+export type VoiceAvailabilityMap = Record<string, VoiceAvailabilityRecord>;
+
 /**
- * Computes a deterministic score for a voice against a given preset based strictly on real metadata.
+ * Returns a clean, neutral error message when a voice generation fails,
+ * avoiding unverified assumptions about plan tiers (e.g. 502 -> 'No disponible actualmente').
+ */
+export function formatVoiceAvailabilityError(status?: number, rawMessage?: string): string {
+  if (status === 502 || rawMessage?.includes("502") || rawMessage?.includes("unexpected error")) {
+    return "No disponible actualmente";
+  }
+  return rawMessage || "No disponible actualmente";
+}
+
+/**
+ * Computes a deterministic suitability score for a voice against a given preset based strictly on real metadata.
  */
 export function scoreVoiceForPreset(voice: GatewayVoice, preset: VoicePreset): number {
   let score = 0;
@@ -192,17 +214,35 @@ export function scoreVoiceForPreset(voice: GatewayVoice, preset: VoicePreset): n
   const voiceCat = (voice.category || "").toLowerCase().trim();
   const voiceName = (voice.name || "").toLowerCase().trim();
 
-  // 1. Language matching (Critical for Español Latino)
+  // 1. Language matching & Multilingual Suitability (Critical for Español Latino)
   if (preset.id === "espanol_latino") {
+    // Native Spanish signals
     if (voiceLang === "es") {
-      score += 100;
+      score += 90;
     }
     if (voiceAccent === "latin american" || voiceAccent === "colombian") {
-      score += 50;
+      score += 45;
     }
-    // Heavy penalty for non-spanish in this specific preset
-    if (voiceLang === "en" || voiceLang === "pt") {
-      score -= 80;
+
+    // Multilingual Premade compatibility (eleven_multilingual_v2):
+    // Neutral and calm premade voices are viable candidates for Spanish narration.
+    if (voiceCat === "premade") {
+      score += 25; // baseline premade stability bonus
+      if (labels.gender === "neutral") {
+        score += 30; // River (gender: neutral, calm)
+      }
+      if (voiceDesc === "calm" || voiceDesc === "professional" || voiceDesc === "mature" || voiceDesc === "warm") {
+        score += 15;
+      }
+    }
+
+    // Penalize strong non-Spanish regional English accents
+    if (voiceAccent === "british" || voiceAccent === "australian") {
+      score -= 20;
+    }
+    // Avoid Roger as the primary recommendation for Spanish
+    if (voiceName.includes("roger")) {
+      score -= 30;
     }
   }
 
@@ -256,31 +296,52 @@ export function scoreVoiceForPreset(voice: GatewayVoice, preset: VoicePreset): n
 }
 
 /**
- * Returns all available voices ranked deterministically for a given preset.
- * Fallback: if no voice scores above 0, returns voices ordered by previewUrl availability and name.
+ * Returns all available voices ranked deterministically for a given preset,
+ * incorporating availability status: working (tier 2) > unknown (tier 1) > failed (tier 0).
+ * Failed voices are strictly relegated to tier 0 and will never be recommended over working or unknown voices.
  */
-export function rankVoicesForPreset(presetId: VoicePresetId, voices: GatewayVoice[]): GatewayVoice[] {
+export function rankVoicesForPreset(
+  presetId: VoicePresetId,
+  voices: GatewayVoice[],
+  availabilityMap?: VoiceAvailabilityMap
+): GatewayVoice[] {
   const preset = VOICE_PRESETS.find((p) => p.id === presetId) || VOICE_PRESETS[0];
 
   if (!voices || voices.length === 0) return [];
 
-  const scored = voices.map((v) => ({
-    voice: v,
-    score: scoreVoiceForPreset(v, preset),
-  }));
+  const scored = voices.map((v) => {
+    const availRecord = availabilityMap?.[v.voiceId];
+    const status: VoiceAvailabilityStatus = availRecord?.status || "unknown";
+
+    // Tier mapping: working = 2, unknown = 1, failed = 0
+    let tier = 1;
+    if (status === "working") tier = 2;
+    else if (status === "failed") tier = 0;
+
+    return {
+      voice: v,
+      score: scoreVoiceForPreset(v, preset),
+      tier,
+      status,
+    };
+  });
 
   scored.sort((a, b) => {
-    // Primary: Score descending
+    // 1. Primary: Availability Tier: working (2) > unknown (1) > failed (0)
+    if (b.tier !== a.tier) {
+      return b.tier - a.tier;
+    }
+    // 2. Secondary: Suitability score descending
     if (b.score !== a.score) {
       return b.score - a.score;
     }
-    // Secondary: Has previewUrl
+    // 3. Tertiary: Has previewUrl
     const aHasPreview = Boolean(a.voice.previewUrl);
     const bHasPreview = Boolean(b.voice.previewUrl);
     if (aHasPreview !== bHasPreview) {
       return aHasPreview ? -1 : 1;
     }
-    // Tertiary deterministic fallback: Alphabetical by name
+    // 4. Quaternary deterministic fallback: Alphabetical by name
     return a.voice.name.localeCompare(b.voice.name);
   });
 
@@ -288,10 +349,14 @@ export function rankVoicesForPreset(presetId: VoicePresetId, voices: GatewayVoic
 }
 
 /**
- * Returns the best recommended voice for a preset.
+ * Returns the best recommended voice for a preset considering current session availability.
  */
-export function getRecommendedVoiceForPreset(presetId: VoicePresetId, voices: GatewayVoice[]): GatewayVoice | undefined {
-  const ranked = rankVoicesForPreset(presetId, voices);
+export function getRecommendedVoiceForPreset(
+  presetId: VoicePresetId,
+  voices: GatewayVoice[],
+  availabilityMap?: VoiceAvailabilityMap
+): GatewayVoice | undefined {
+  const ranked = rankVoicesForPreset(presetId, voices, availabilityMap);
   return ranked[0];
 }
 

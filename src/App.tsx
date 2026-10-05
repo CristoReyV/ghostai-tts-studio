@@ -20,7 +20,12 @@ import {
   generateNarrationAudio,
 } from "./services/gateway";
 import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
-import { type VoicePresetId, getRecommendedVoiceForPreset } from "./services/voicePresets";
+import {
+  type VoicePresetId,
+  type VoiceAvailabilityMap,
+  getRecommendedVoiceForPreset,
+  formatVoiceAvailabilityError,
+} from "./services/voicePresets";
 import { Header } from "./components/Header";
 import { ProjectImporter } from "./components/ProjectImporter";
 import { ProjectOverview } from "./components/ProjectOverview";
@@ -34,6 +39,9 @@ export const App: React.FC = () => {
   const [checkingHealth, setCheckingHealth] = useState<boolean>(true);
   const [voices, setVoices] = useState<GatewayVoice[]>([]);
   const [models, setModels] = useState<GatewayModel[]>([]);
+
+  // Voice Availability in-memory session registry (unknown | working | failed)
+  const [voiceAvailability, setVoiceAvailability] = useState<VoiceAvailabilityMap>({});
 
   // Project state
   const [currentProject, setCurrentProject] = useState<GhostAiTtsFile | null>(null);
@@ -81,7 +89,8 @@ export const App: React.FC = () => {
 
       // Pick default voice if not set based on the active preset (defaults to Español Latino)
       if (loadedVoices.length > 0 && !selectedVoiceId) {
-        const recommended = getRecommendedVoiceForPreset(selectedPresetId, loadedVoices) || loadedVoices[0];
+        const recommended =
+          getRecommendedVoiceForPreset(selectedPresetId, loadedVoices, voiceAvailability) || loadedVoices[0];
         setSelectedVoiceId(recommended.voiceId);
       }
     } catch (err) {
@@ -96,7 +105,7 @@ export const App: React.FC = () => {
     } finally {
       setCheckingHealth(false);
     }
-  }, [selectedVoiceId]);
+  }, [selectedVoiceId, selectedPresetId, voiceAvailability]);
 
   useEffect(() => {
     loadGatewayData();
@@ -198,8 +207,9 @@ export const App: React.FC = () => {
         prev.map((it) => (it.id === itemId ? { ...it, status: "GENERATING", error: undefined } : it))
       );
 
+      const voiceToUse = currentItem.voiceId || selectedVoiceId || voices[0]?.voiceId;
+
       try {
-        const voiceToUse = currentItem.voiceId || selectedVoiceId || voices[0]?.voiceId;
         if (!voiceToUse) {
           throw new Error("No hay una voz de ElevenLabs seleccionada para esta narración.");
         }
@@ -238,6 +248,16 @@ export const App: React.FC = () => {
           )
         );
 
+        // Mark voice as working in current session
+        setVoiceAvailability((prev) => ({
+          ...prev,
+          [voiceToUse]: {
+            status: "working",
+            lastStatus: 200,
+            updatedAt: Date.now(),
+          },
+        }));
+
         successCount++;
       } catch (err: unknown) {
         if (controller.signal.aborted || (err as Error).name === "AbortError") {
@@ -248,17 +268,30 @@ export const App: React.FC = () => {
           break;
         }
 
-        const errMsg = (err as Error).message || "Error al sintetizar voz en Gateway";
+        const statusCode = (err as { statusCode?: number })?.statusCode || 500;
+        const rawMsg = (err as Error).message || "Error al sintetizar voz en Gateway";
+        const neutralMsg = formatVoiceAvailabilityError(statusCode, rawMsg);
         failCount++;
 
-        // Keep all previously completed items and record error on this item
+        // Mark voice as failed in current session without speculative assertions
+        setVoiceAvailability((prev) => ({
+          ...prev,
+          [voiceToUse]: {
+            status: "failed",
+            lastStatus: statusCode,
+            lastError: neutralMsg,
+            updatedAt: Date.now(),
+          },
+        }));
+
+        // Keep all previously completed items and record clean error on this item
         setItems((prev) =>
           prev.map((it) =>
             it.id === itemId
               ? {
                   ...it,
                   status: "ERROR",
-                  error: errMsg,
+                  error: neutralMsg,
                 }
               : it
           )
@@ -390,6 +423,7 @@ export const App: React.FC = () => {
                 selectedModelId={selectedModelId}
                 selectedOutputFormat={selectedOutputFormat}
                 selectedPresetId={selectedPresetId}
+                availabilityMap={voiceAvailability}
                 onSelectPreset={setSelectedPresetId}
                 onSelectVoice={setSelectedVoiceId}
                 onSelectModel={setSelectedModelId}

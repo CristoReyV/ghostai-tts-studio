@@ -22,6 +22,7 @@ import type { GatewayModel, GatewayVoice } from "../types/tts";
 import {
   VOICE_PRESETS,
   type VoicePresetId,
+  type VoiceAvailabilityMap,
   getRecommendedVoiceForPreset,
   getModelDescription,
 } from "../services/voicePresets";
@@ -33,6 +34,7 @@ interface BatchControlsProps {
   selectedModelId: string;
   selectedOutputFormat: string;
   selectedPresetId: VoicePresetId;
+  availabilityMap?: VoiceAvailabilityMap;
   onSelectPreset: (presetId: VoicePresetId) => void;
   onSelectVoice: (voiceId: string) => void;
   onSelectModel: (modelId: string) => void;
@@ -56,6 +58,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   selectedModelId,
   selectedOutputFormat,
   selectedPresetId,
+  availabilityMap,
   onSelectPreset,
   onSelectVoice,
   onSelectModel,
@@ -81,10 +84,17 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const activePreset = VOICE_PRESETS.find((p) => p.id === selectedPresetId) || VOICE_PRESETS[0];
 
   // Determine if current voice is a manual override or matches the preset recommendation
-  const recommendedVoiceForPreset = getRecommendedVoiceForPreset(selectedPresetId, voices);
+  const recommendedVoiceForPreset = getRecommendedVoiceForPreset(selectedPresetId, voices, availabilityMap);
   const isManualOverride = Boolean(
     recommendedVoiceForPreset && selectedVoiceId && selectedVoiceId !== recommendedVoiceForPreset.voiceId
   );
+
+  const recommendedBadgeText =
+    selectedPresetId === "espanol_latino" ? "Voz recomendada para español" : "Recomendada";
+
+  const selectedVoiceAvail = selectedVoiceId ? availabilityMap?.[selectedVoiceId] : undefined;
+  const isSelectedVoiceFailed = selectedVoiceAvail?.status === "failed";
+  const isSelectedVoiceWorking = selectedVoiceAvail?.status === "working";
 
   // Handle Voice Preview
   const handlePlayVoicePreview = () => {
@@ -125,7 +135,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
   const handlePresetChange = (presetId: VoicePresetId) => {
     onSelectPreset(presetId);
-    const bestVoice = getRecommendedVoiceForPreset(presetId, voices);
+    const bestVoice = getRecommendedVoiceForPreset(presetId, voices, availabilityMap);
     if (bestVoice) {
       onSelectVoice(bestVoice.voiceId);
     }
@@ -179,7 +189,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 </span>
               ) : (
                 <span className="badge-recommended-voice" title="Voz recomendada automáticamente para este preset">
-                  <Sparkles size={10} className="mr-0.5 inline" /> Recomendada
+                  <Sparkles size={10} className="mr-0.5 inline" /> {recommendedBadgeText}
                 </span>
               )}
             </div>
@@ -207,11 +217,19 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
               <option value="">Cargando voces del Gateway...</option>
             ) : (
               voices.map((v) => {
+                const avail = availabilityMap?.[v.voiceId];
+                const isFailed = avail?.status === "failed";
+                const isWorking = avail?.status === "working";
                 const langLabel = v.labels?.language ? `[${v.labels.language.toUpperCase()}]` : "";
                 const accentLabel = v.labels?.accent ? `· ${v.labels.accent}` : "";
+                const statusTag = isFailed
+                  ? " · [No disponible]"
+                  : isWorking
+                  ? " · ✓"
+                  : "";
                 return (
                   <option key={v.voiceId} value={v.voiceId}>
-                    {v.name} {langLabel} {accentLabel}
+                    {v.name} {langLabel} {accentLabel} {statusTag}
                   </option>
                 );
               })
@@ -226,6 +244,16 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 {selectedVoice.labels?.accent && <span className="meta-pill">{selectedVoice.labels.accent}</span>}
                 {selectedVoice.labels?.descriptive && (
                   <span className="meta-pill text-accent">{selectedVoice.labels.descriptive}</span>
+                )}
+                {isSelectedVoiceFailed && (
+                  <span className="meta-pill text-rose border-rose" title={selectedVoiceAvail?.lastError || "No disponible actualmente"}>
+                    ⚠️ No disponible actualmente
+                  </span>
+                )}
+                {isSelectedVoiceWorking && (
+                  <span className="meta-pill text-emerald border-emerald" title="Verificada en esta sesión">
+                    ✓ Verificada
+                  </span>
                 )}
               </>
             ) : (
