@@ -82,6 +82,7 @@ export interface BatchControlsProps {
   hasReadyItems: boolean;
   readyCount: number;
   totalCount: number;
+  isAuthenticated?: boolean;
 }
 
 export const BatchControls: React.FC<BatchControlsProps> = ({
@@ -106,6 +107,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   hasReadyItems,
   readyCount,
   totalCount,
+  isAuthenticated = false,
 }) => {
   // Global Audio Preview Singleton Player
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -363,6 +365,15 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       setActionFeedback({
         type: "success",
         message: `Voz '${voice.name}' seleccionada para el proyecto.`,
+      });
+      return;
+    }
+
+    // Guard: require operator auth for adding shared voices to account
+    if (!isAuthenticated) {
+      setActionFeedback({
+        type: "error",
+        message: "Conecta tu acceso para usar esta acción.",
       });
       return;
     }
@@ -870,12 +881,14 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
                     {(() => {
                       const isUnavailableToAdd = !isInCollection && !voice.publicOwnerId;
+                      const requiresAuth = !isInCollection && !isAuthenticated;
                       return (
                         <button
                           type="button"
-                          className={`btn-card-use-voice ${isSelected ? "selected" : ""}`}
+                          className={`btn-card-use-voice ${isSelected ? "selected" : ""} ${requiresAuth ? "btn-auth-locked" : ""}`}
                           onClick={() => handleUseVoice(voice)}
                           disabled={isAdding || isUnavailableToAdd}
+                          title={requiresAuth ? "Conecta tu acceso para usar esta acción" : undefined}
                         >
                           {isAdding ? (
                             <>
@@ -891,6 +904,8 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                             </>
                           ) : isUnavailableToAdd ? (
                             "No disponible para añadir"
+                          ) : requiresAuth ? (
+                            "Conecta tu acceso para usar esta acción"
                           ) : (
                             "Usar voz"
                           )}
@@ -1102,13 +1117,16 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           ) : (
             <button
               type="button"
-              className="btn-generate-main"
+              className={`btn-generate-main ${!isAuthenticated ? "btn-auth-locked" : ""}`}
               onClick={onGenerateAll}
-              disabled={totalCount === 0 || readyCount === totalCount}
+              disabled={totalCount === 0 || readyCount === totalCount || !isAuthenticated}
+              title={!isAuthenticated ? "Conecta tu acceso para usar esta acción" : undefined}
             >
               <Volume2 size={18} className="mr-2" />
               <span>
-                Generar Todas las Narraciones ({readyCount}/{totalCount})
+                {!isAuthenticated
+                  ? "Conecta tu acceso para usar esta acción"
+                  : `Generar Todas las Narraciones (${readyCount}/${totalCount})`}
               </span>
             </button>
           )}

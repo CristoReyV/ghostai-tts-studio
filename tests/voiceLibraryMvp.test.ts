@@ -11,6 +11,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   fetchVoiceLibrary,
   addSharedVoiceToAccount,
+  setGatewayAuthToken,
+  clearGatewayAuthToken,
   TtsGatewayError,
 } from "../src/services/gateway";
 import { COMMON_LANGUAGE_ACCENTS } from "../src/services/voiceLibrary";
@@ -22,10 +24,12 @@ describe("Studio - Voice Library MVP Specification Tests", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    setGatewayAuthToken("test-operator-token");
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    clearGatewayAuthToken();
   });
 
   // Mock catalog responses

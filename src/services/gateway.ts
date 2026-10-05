@@ -22,6 +22,107 @@ export function getGatewayBaseUrl(): string {
   return "https://tts-test.smartbrain.lat";
 }
 
+/** Key used exclusively in sessionStorage for operator authentication */
+export const OPERATOR_TOKEN_STORAGE_KEY = "ghostai_tts_operator_access";
+
+let memorySessionToken: string | null = null;
+
+/**
+ * Reads operator auth token from sessionStorage.
+ * Includes guard for test environments where window.sessionStorage is undefined.
+ * Never reads from localStorage, cookies, URL, or persistent storage.
+ */
+export function getGatewayAuthToken(): string | null {
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      return window.sessionStorage.getItem(OPERATOR_TOKEN_STORAGE_KEY);
+    } catch {
+      return memorySessionToken;
+    }
+  }
+  return memorySessionToken;
+}
+
+/**
+ * Stores validated operator auth token into sessionStorage.
+ */
+export function setGatewayAuthToken(token: string): void {
+  const clean = token && token.trim() ? token.trim() : null;
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      if (clean) {
+        window.sessionStorage.setItem(OPERATOR_TOKEN_STORAGE_KEY, clean);
+      } else {
+        window.sessionStorage.removeItem(OPERATOR_TOKEN_STORAGE_KEY);
+      }
+    } catch {}
+  }
+  memorySessionToken = clean;
+}
+
+/**
+ * Removes operator auth token from sessionStorage.
+ */
+export function clearGatewayAuthToken(): void {
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      window.sessionStorage.removeItem(OPERATOR_TOKEN_STORAGE_KEY);
+    } catch {}
+  }
+  memorySessionToken = null;
+}
+
+/**
+ * Validates the operator Bearer token against GET /api/tts/auth/verify.
+ * Does NOT call ElevenLabs, does NOT spend credits.
+ * Does NOT store the token automatically — the caller stores it only on success.
+ */
+export async function verifyGatewayAuthToken(
+  token: string,
+  signal?: AbortSignal
+): Promise<{ ok: boolean; message?: string }> {
+  if (!token || !token.trim()) {
+    return { ok: false, message: "La clave de acceso no puede estar vacía." };
+  }
+
+  const base = getGatewayBaseUrl();
+  const url = `${base}/api/tts/auth/verify`;
+
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+      },
+      signal,
+    });
+
+    if (res.ok) {
+      return { ok: true };
+    }
+
+    if (res.status === 401) {
+      let errMsg = "Clave de acceso no autorizada o inválida.";
+      try {
+        const body = await res.json();
+        if (body?.error?.message) errMsg = body.error.message;
+      } catch {}
+      return { ok: false, message: errMsg };
+    }
+
+    if (res.status === 500) {
+      return {
+        ok: false,
+        message: "El Gateway no tiene configurada la autenticación de operador en el servidor.",
+      };
+    }
+
+    return { ok: false, message: `Error HTTP ${res.status} al verificar la clave de acceso.` };
+  } catch (err) {
+    return { ok: false, message: `Error de conexión: ${(err as Error).message}` };
+  }
+}
+
 export interface GenerateAudioParams {
   voiceId: string;
   text: string;
@@ -124,6 +225,15 @@ export async function fetchGatewayModels(signal?: AbortSignal): Promise<GatewayM
  * Returns raw Blob without unnecessary base64 conversion.
  */
 export async function generateNarrationAudio(params: GenerateAudioParams): Promise<GenerateAudioResult> {
+  const token = getGatewayAuthToken();
+  if (!token || !token.trim()) {
+    throw new TtsGatewayError(
+      "Se requiere una clave de acceso de operador para generar narraciones.",
+      "AUTH_REQUIRED",
+      401
+    );
+  }
+
   const base = getGatewayBaseUrl();
   const url = `${base}/api/tts/generate`;
 
@@ -142,6 +252,7 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${token.trim()}`,
     },
     body: JSON.stringify(payload),
     signal: params.signal,
@@ -152,6 +263,10 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
   const outputFormat = res.headers.get("X-TTS-Output-Format") || payload.outputFormat;
 
   if (!res.ok) {
+    if (res.status === 401) {
+      clearGatewayAuthToken();
+    }
+
     let errMsg = `Error HTTP ${res.status} al generar audio`;
     let errCode = "GENERATE_FAILED";
     let bodyReqId = requestId;
@@ -224,6 +339,15 @@ export async function addSharedVoiceToAccount(
   request: AddSharedVoiceRequest,
   signal?: AbortSignal
 ): Promise<AddSharedVoiceResponse> {
+  const token = getGatewayAuthToken();
+  if (!token || !token.trim()) {
+    throw new TtsGatewayError(
+      "Se requiere una clave de acceso de operador para añadir voces a tu colección.",
+      "AUTH_REQUIRED",
+      401
+    );
+  }
+
   const base = getGatewayBaseUrl();
   const url = `${base}/api/tts/voices/shared/add`;
 
@@ -231,12 +355,17 @@ export async function addSharedVoiceToAccount(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${token.trim()}`,
     },
     body: JSON.stringify(request),
     signal,
   });
 
   if (!res.ok) {
+    if (res.status === 401) {
+      clearGatewayAuthToken();
+    }
+
     let errMsg = `Error ${res.status} al añadir voz a tu colección`;
     let errCode = "ADD_SHARED_VOICE_FAILED";
     try {

@@ -18,6 +18,8 @@ import {
   fetchGatewayModels,
   fetchGatewayVoices,
   generateNarrationAudio,
+  getGatewayAuthToken,
+  clearGatewayAuthToken,
 } from "./services/gateway";
 import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
 import {
@@ -33,6 +35,9 @@ import { NarrationTable } from "./components/NarrationTable";
 import { AlertCircle, CheckCircle, Info } from "lucide-react";
 
 export const App: React.FC = () => {
+  // Operator authentication state (session-only)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getGatewayAuthToken()));
+
   // Gateway states
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealth | null>(null);
   const [checkingHealth, setCheckingHealth] = useState<boolean>(true);
@@ -195,6 +200,11 @@ export const App: React.FC = () => {
   const executeSequentialGeneration = async (targetItemIds: string[]) => {
     if (targetItemIds.length === 0) return;
 
+    if (!isAuthenticated) {
+      showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+
     setIsGenerating(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -278,6 +288,23 @@ export const App: React.FC = () => {
         }
 
         const statusCode = (err as { statusCode?: number })?.statusCode || 500;
+        const errCode = (err as { code?: string })?.code;
+
+        if (statusCode === 401 || errCode === "AUTH_REQUIRED" || errCode === "AUTH_INVALID") {
+          setIsAuthenticated(false);
+          clearGatewayAuthToken();
+          failCount++;
+          const authMsg = "Conecta tu acceso para usar esta acción.";
+          setItems((prev) =>
+            prev.map((it) => (it.id === itemId ? { ...it, status: "ERROR", error: authMsg } : it))
+          );
+          showNotification(
+            "error",
+            "La clave de acceso de operador no está autorizada o ha expirado. Por favor reconecta."
+          );
+          break; // Stop immediately - NO automatic retry
+        }
+
         const rawMsg = (err as Error).message || "Error al sintetizar voz en Gateway";
         const neutralMsg = formatVoiceAvailabilityError(statusCode, rawMsg);
         failCount++;
@@ -323,6 +350,11 @@ export const App: React.FC = () => {
 
   // 6. Generate All (Pending / Cancelled / Error)
   const handleGenerateAll = () => {
+    if (!isAuthenticated) {
+      showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+
     const pendingIds = items
       .filter((it) => it.status !== "READY")
       .map((it) => it.id);
@@ -337,6 +369,11 @@ export const App: React.FC = () => {
 
   // 7. Retry Failed Only
   const handleRetryFailed = () => {
+    if (!isAuthenticated) {
+      showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+
     const errorIds = items.filter((it) => it.status === "ERROR").map((it) => it.id);
     if (errorIds.length === 0) return;
     executeSequentialGeneration(errorIds);
@@ -344,6 +381,11 @@ export const App: React.FC = () => {
 
   // 8. Generate Single Item
   const handleGenerateSingle = (id: string) => {
+    if (!isAuthenticated) {
+      showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+
     executeSequentialGeneration([id]);
   };
 
@@ -403,6 +445,8 @@ export const App: React.FC = () => {
         health={gatewayHealth}
         checkingHealth={checkingHealth}
         onRefreshHealth={loadGatewayData}
+        isAuthenticated={isAuthenticated}
+        onAuthStateChange={setIsAuthenticated}
       />
 
       {/* Main Content Area */}
@@ -450,6 +494,7 @@ export const App: React.FC = () => {
                 hasReadyItems={readyItemsCount > 0}
                 readyCount={readyItemsCount}
                 totalCount={items.length}
+                isAuthenticated={isAuthenticated}
               />
             </section>
 

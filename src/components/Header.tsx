@@ -7,14 +7,23 @@ import React from "react";
 import { ExternalLink, RefreshCw, Layers } from "lucide-react";
 import type { GatewayHealth } from "../types/tts";
 import { getGatewayBaseUrl } from "../services/gateway";
+import { OperatorAccess } from "./OperatorAccess";
 
 interface HeaderProps {
   health: GatewayHealth | null;
   checkingHealth: boolean;
   onRefreshHealth: () => void;
+  isAuthenticated: boolean;
+  onAuthStateChange: (authenticated: boolean) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ health, checkingHealth, onRefreshHealth }) => {
+export const Header: React.FC<HeaderProps> = ({
+  health,
+  checkingHealth,
+  onRefreshHealth,
+  isAuthenticated,
+  onAuthStateChange,
+}) => {
   const gatewayUrl = getGatewayBaseUrl();
 
   const isHealthy = health?.ok && health.configured;
@@ -37,6 +46,11 @@ export const Header: React.FC<HeaderProps> = ({ health, checkingHealth, onRefres
       </div>
 
       <div className="header-right">
+        <OperatorAccess
+          isAuthenticated={isAuthenticated}
+          onAuthStateChange={onAuthStateChange}
+        />
+
         <div className={`gateway-status-card ${isHealthy ? "status-online" : "status-warning"}`}>
           <div className="status-indicator-dot">
             <span className={`pulse-dot ${isHealthy ? "bg-emerald" : "bg-amber"}`}></span>

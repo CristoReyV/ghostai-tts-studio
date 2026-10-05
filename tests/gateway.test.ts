@@ -8,12 +8,19 @@ import {
   getGatewayBaseUrl,
   generateNarrationAudio,
   checkGatewayHealth,
+  setGatewayAuthToken,
+  clearGatewayAuthToken,
   TtsGatewayError,
 } from "../src/services/gateway";
 
 describe("gateway service", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    setGatewayAuthToken("test-operator-token");
+  });
+
+  afterEach(() => {
+    clearGatewayAuthToken();
   });
 
   it("returns default certified gateway URL when no env override is present", () => {
