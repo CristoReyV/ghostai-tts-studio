@@ -160,20 +160,34 @@ export const App: React.FC = () => {
     setItems([]);
   };
 
-  // 3. Batch Apply Voice & Model to Pending Items
-  const handleApplyToPending = () => {
+  // 3. Unified Global Voice & Settings Selection (Usar voz)
+  const handleSelectGlobalVoice = (voiceId: string) => {
+    setSelectedVoiceId(voiceId);
     setItems((prev) =>
-      prev.map((item) => {
-        if (item.status === "PENDING" || item.status === "CANCELLED" || item.status === "ERROR") {
-          return {
-            ...item,
-            voiceId: selectedVoiceId || item.voiceId,
-            modelId: selectedModelId || item.modelId,
-            outputFormat: selectedOutputFormat || item.outputFormat,
-          };
-        }
-        return item;
-      })
+      prev.map((item) => ({
+        ...item,
+        voiceId,
+      }))
+    );
+  };
+
+  const handleSelectGlobalModel = (modelId: string) => {
+    setSelectedModelId(modelId);
+    setItems((prev) =>
+      prev.map((item) => ({
+        ...item,
+        modelId,
+      }))
+    );
+  };
+
+  const handleSelectGlobalOutputFormat = (outputFormat: string) => {
+    setSelectedOutputFormat(outputFormat);
+    setItems((prev) =>
+      prev.map((item) => ({
+        ...item,
+        outputFormat,
+      }))
     );
   };
 
@@ -480,11 +494,10 @@ export const App: React.FC = () => {
                 availabilityMap={voiceAvailability}
                 onSelectLanguage={setSelectedLanguage}
                 onSelectCategory={setSelectedCategory}
-                onSelectVoice={setSelectedVoiceId}
-                onSelectModel={setSelectedModelId}
-                onSelectOutputFormat={setSelectedOutputFormat}
+                onSelectVoice={handleSelectGlobalVoice}
+                onSelectModel={handleSelectGlobalModel}
+                onSelectOutputFormat={handleSelectGlobalOutputFormat}
                 onVoiceAdded={handleVoiceAdded}
-                onApplyToPending={handleApplyToPending}
                 isGenerating={isGenerating}
                 onGenerateAll={handleGenerateAll}
                 onCancelGeneration={handleCancelGeneration}

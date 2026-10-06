@@ -155,6 +155,11 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
             className="row-select"
             title="Voz asignada a este elemento"
           >
+            {item.voiceId && !voices.some((v) => v.voiceId === item.voiceId) && (
+              <option key={item.voiceId} value={item.voiceId}>
+                {item.voiceId} (original)
+              </option>
+            )}
             {voices.map((v) => (
               <option key={v.voiceId} value={v.voiceId}>
                 {v.name}

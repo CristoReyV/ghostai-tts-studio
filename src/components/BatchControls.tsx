@@ -15,7 +15,6 @@ import {
   PackageCheck,
   Volume2,
   VolumeX,
-  Sliders,
   Check,
   ChevronDown,
   ChevronUp,
@@ -72,7 +71,6 @@ export interface BatchControlsProps {
   onSelectModel: (modelId: string) => void;
   onSelectOutputFormat: (format: string) => void;
   onVoiceAdded?: (voice: GatewayVoice) => void;
-  onApplyToPending: () => void;
   isGenerating: boolean;
   onGenerateAll: () => void;
   onCancelGeneration: () => void;
@@ -97,7 +95,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   onSelectModel,
   onSelectOutputFormat,
   onVoiceAdded,
-  onApplyToPending,
   isGenerating,
   onGenerateAll,
   onCancelGeneration,
@@ -142,7 +139,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
   // UI state for dropdowns & accordions
   const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
-  const [appliedNotice, setAppliedNotice] = useState(false);
   const [isModelAdvancedOpen, setIsModelAdvancedOpen] = useState(false);
   const [isFormatAdvancedOpen, setIsFormatAdvancedOpen] = useState(false);
 
@@ -436,13 +432,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     setSelectedGender("all");
     setSelectedAge("all");
     setSearchInput("");
-  };
-
-  // Apply batch configuration to pending items
-  const handleApplyClick = () => {
-    onApplyToPending();
-    setAppliedNotice(true);
-    setTimeout(() => setAppliedNotice(false), 2600);
   };
 
   return (
@@ -1086,23 +1075,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       {/* 6. BARRA DE ACCIÓN Y GENERACIÓN BATCH                      */}
       {/* ────────────────────────────────────────────────────────── */}
       <div className="studio-bottom-action-bar">
-        <div className="action-bar-left">
-          <button
-            type="button"
-            className="btn-apply-batch"
-            onClick={handleApplyClick}
-            disabled={isGenerating || totalCount === 0}
-            title="Aplica la voz, modelo y formato seleccionados a las escenas pendientes"
-          >
-            <Sliders size={16} className="mr-2" />
-            <span>Aplicar Configuración a Escenas</span>
-          </button>
-          {appliedNotice && (
-            <span className="applied-pill-notice animate-fade-in">
-              <Check size={14} className="mr-1 text-emerald" /> ¡Configuración aplicada!
-            </span>
-          )}
-        </div>
+        <div className="action-bar-left" />
 
         <div className="action-bar-right">
           {isGenerating ? (
