@@ -254,6 +254,7 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
       "Content-Type": "application/json",
       Authorization: `Bearer ${token.trim()}`,
     },
+    credentials: "include",
     body: JSON.stringify(payload),
     signal: params.signal,
   });
@@ -263,10 +264,6 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
   const outputFormat = res.headers.get("X-TTS-Output-Format") || payload.outputFormat;
 
   if (!res.ok) {
-    if (res.status === 401) {
-      clearGatewayAuthToken();
-    }
-
     let errMsg = `Error HTTP ${res.status} al generar audio`;
     let errCode = "GENERATE_FAILED";
     let bodyReqId = requestId;
@@ -278,6 +275,21 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
       if (errData?.requestId) bodyReqId = errData.requestId;
     } catch (_) {}
 
+    // Only clear operator auth token if the error was operator auth failure,
+    // NOT when the user's ElevenLabs BYOK key was rejected
+    if (res.status === 401 && (errCode === "AUTH_REQUIRED" || errCode === "AUTH_INVALID")) {
+      clearGatewayAuthToken();
+    }
+
+    if (res.status === 428 || errCode === "ELEVENLABS_NOT_CONNECTED") {
+      throw new TtsGatewayError(
+        errMsg || "Conecta tu cuenta de ElevenLabs antes de generar.",
+        "ELEVENLABS_NOT_CONNECTED",
+        res.status,
+        bodyReqId || requestId
+      );
+    }
+
     throw new TtsGatewayError(errMsg, errCode, res.status, bodyReqId || requestId);
   }
 
@@ -288,6 +300,149 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     outputFormat,
     durationMs,
   };
+}
+
+export interface ByokStatusResponse {
+  connected: boolean;
+  provider?: string;
+}
+
+export interface ByokConnectResponse {
+  ok: boolean;
+  connected?: boolean;
+  provider?: string;
+  tier?: string;
+  status?: string;
+  message?: string;
+}
+
+/**
+ * Connects the user's personal ElevenLabs API key for this browser session.
+ * Transmits the key securely via HTTPS to the Gateway with credentials: 'include'.
+ * The frontend NEVER stores the key in localStorage, sessionStorage or anywhere else.
+ */
+export async function connectElevenLabs(
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<ByokConnectResponse> {
+  const token = getGatewayAuthToken();
+  if (!token || !token.trim()) {
+    throw new TtsGatewayError(
+      "Se requiere una clave de acceso de operador para conectar ElevenLabs.",
+      "AUTH_REQUIRED",
+      401
+    );
+  }
+
+  const cleanKey = apiKey ? apiKey.trim() : "";
+  if (!cleanKey) {
+    throw new TtsGatewayError(
+      "La API key de ElevenLabs no puede estar vacía.",
+      "VALIDATION_MISSING_FIELD",
+      400
+    );
+  }
+
+  const base = getGatewayBaseUrl();
+  const url = `${base}/api/tts/provider/elevenlabs/connect`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token.trim()}`,
+    },
+    credentials: "include",
+    body: JSON.stringify({ apiKey: cleanKey }),
+    signal,
+  });
+
+  if (!res.ok) {
+    let errMsg = `Error ${res.status} al conectar ElevenLabs`;
+    let errCode = "CONNECT_FAILED";
+    try {
+      const errData = await res.json();
+      if (errData?.error?.message) errMsg = errData.error.message;
+      if (errData?.error?.code) errCode = errData.error.code;
+    } catch (_) {}
+
+    if (res.status === 401 && (errCode === "AUTH_REQUIRED" || errCode === "AUTH_INVALID")) {
+      clearGatewayAuthToken();
+    }
+
+    throw new TtsGatewayError(errMsg, errCode, res.status);
+  }
+
+  const data = (await res.json()) as ByokConnectResponse;
+  return data;
+}
+
+/**
+ * Checks if the current browser session has a valid BYOK ElevenLabs connection.
+ * Pure server-side cookie probe — does not call ElevenLabs external API.
+ */
+export async function checkElevenLabsStatus(
+  signal?: AbortSignal
+): Promise<ByokStatusResponse> {
+  const token = getGatewayAuthToken();
+  if (!token || !token.trim()) {
+    return { connected: false, provider: "elevenlabs" };
+  }
+
+  const base = getGatewayBaseUrl();
+  const url = `${base}/api/tts/provider/elevenlabs/status`;
+
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+      },
+      credentials: "include",
+      signal,
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        clearGatewayAuthToken();
+      }
+      return { connected: false, provider: "elevenlabs" };
+    }
+
+    const data = (await res.json()) as ByokStatusResponse;
+    return data;
+  } catch {
+    return { connected: false, provider: "elevenlabs" };
+  }
+}
+
+/**
+ * Disconnects the user's ElevenLabs BYOK session by expiring the HttpOnly cookie.
+ */
+export async function disconnectElevenLabs(
+  signal?: AbortSignal
+): Promise<{ ok: boolean }> {
+  const token = getGatewayAuthToken();
+  if (!token || !token.trim()) {
+    return { ok: true };
+  }
+
+  const base = getGatewayBaseUrl();
+  const url = `${base}/api/tts/provider/elevenlabs/disconnect`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.trim()}`,
+      },
+      credentials: "include",
+      signal,
+    });
+    return { ok: res.ok };
+  } catch {
+    return { ok: false };
+  }
 }
 
 /**
@@ -357,6 +512,7 @@ export async function addSharedVoiceToAccount(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token.trim()}`,
     },
+    credentials: "include",
     body: JSON.stringify(request),
     signal,
   });

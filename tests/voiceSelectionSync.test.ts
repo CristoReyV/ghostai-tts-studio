@@ -284,6 +284,7 @@ describe("MVP Fix 01 — Unified Voice Selection Synchronization", () => {
       readyCount: 0,
       totalCount: 4,
       isAuthenticated: true,
+      isProviderConnected: true,
     });
 
     const renderedHtml = renderToStaticMarkup(jsx);

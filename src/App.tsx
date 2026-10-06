@@ -20,6 +20,9 @@ import {
   generateNarrationAudio,
   getGatewayAuthToken,
   clearGatewayAuthToken,
+  connectElevenLabs,
+  checkElevenLabsStatus,
+  disconnectElevenLabs,
 } from "./services/gateway";
 import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
 import {
@@ -37,6 +40,9 @@ import { AlertCircle, CheckCircle, Info } from "lucide-react";
 export const App: React.FC = () => {
   // Operator authentication state (session-only)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getGatewayAuthToken()));
+
+  // BYOK ElevenLabs connection state (session-only via HttpOnly cookie)
+  const [isProviderConnected, setIsProviderConnected] = useState<boolean>(false);
 
   // Gateway states
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealth | null>(null);
@@ -124,6 +130,55 @@ export const App: React.FC = () => {
   useEffect(() => {
     loadGatewayData();
   }, [loadGatewayData]);
+
+  // Check BYOK ElevenLabs connection status whenever authentication changes
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setIsProviderConnected(false);
+      return;
+    }
+
+    let isMounted = true;
+    checkElevenLabsStatus()
+      .then((status) => {
+        if (isMounted) {
+          setIsProviderConnected(Boolean(status?.connected));
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setIsProviderConnected(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated]);
+
+  const handleConnectProvider = async (apiKey: string): Promise<{ ok: boolean; message?: string }> => {
+    try {
+      const res = await connectElevenLabs(apiKey);
+      if (res.ok) {
+        setIsProviderConnected(true);
+        showNotification("success", "ElevenLabs conectado correctamente.");
+        return { ok: true };
+      }
+      return { ok: false, message: res.message || "Error al conectar ElevenLabs." };
+    } catch (err) {
+      const msg = (err as Error).message || "Error al conectar ElevenLabs.";
+      return { ok: false, message: msg };
+    }
+  };
+
+  const handleDisconnectProvider = async (): Promise<void> => {
+    try {
+      await disconnectElevenLabs();
+    } finally {
+      setIsProviderConnected(false);
+      showNotification("info", "ElevenLabs desconectado.");
+    }
+  };
 
   // Clean up object URLs when unmounting or resetting
   const cleanupAudioUrls = (itemsList: StudioNarrationItem[]) => {
@@ -219,6 +274,11 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (!isProviderConnected) {
+      showNotification("error", "Conecta ElevenLabs para generar narraciones.");
+      return;
+    }
+
     setIsGenerating(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -304,7 +364,7 @@ export const App: React.FC = () => {
         const statusCode = (err as { statusCode?: number })?.statusCode || 500;
         const errCode = (err as { code?: string })?.code;
 
-        if (statusCode === 401 || errCode === "AUTH_REQUIRED" || errCode === "AUTH_INVALID") {
+        if (statusCode === 401 && (errCode === "AUTH_REQUIRED" || errCode === "AUTH_INVALID")) {
           setIsAuthenticated(false);
           clearGatewayAuthToken();
           failCount++;
@@ -315,6 +375,24 @@ export const App: React.FC = () => {
           showNotification(
             "error",
             "La clave de acceso de operador no está autorizada o ha expirado. Por favor reconecta."
+          );
+          break; // Stop immediately - NO automatic retry
+        }
+
+        if (
+          statusCode === 428 ||
+          errCode === "ELEVENLABS_NOT_CONNECTED" ||
+          errCode === "ELEVENLABS_INVALID_API_KEY"
+        ) {
+          setIsProviderConnected(false);
+          failCount++;
+          const byokMsg = "Conecta ElevenLabs para generar narraciones.";
+          setItems((prev) =>
+            prev.map((it) => (it.id === itemId ? { ...it, status: "ERROR", error: byokMsg } : it))
+          );
+          showNotification(
+            "error",
+            "Se requiere conectar una API key de ElevenLabs válida."
           );
           break; // Stop immediately - NO automatic retry
         }
@@ -369,6 +447,11 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (!isProviderConnected) {
+      showNotification("error", "Conecta ElevenLabs para generar narraciones.");
+      return;
+    }
+
     const pendingIds = items
       .filter((it) => it.status !== "READY")
       .map((it) => it.id);
@@ -388,6 +471,11 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (!isProviderConnected) {
+      showNotification("error", "Conecta ElevenLabs para generar narraciones.");
+      return;
+    }
+
     const errorIds = items.filter((it) => it.status === "ERROR").map((it) => it.id);
     if (errorIds.length === 0) return;
     executeSequentialGeneration(errorIds);
@@ -397,6 +485,11 @@ export const App: React.FC = () => {
   const handleGenerateSingle = (id: string) => {
     if (!isAuthenticated) {
       showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+
+    if (!isProviderConnected) {
+      showNotification("error", "Conecta ElevenLabs para generar narraciones.");
       return;
     }
 
@@ -508,6 +601,9 @@ export const App: React.FC = () => {
                 readyCount={readyItemsCount}
                 totalCount={items.length}
                 isAuthenticated={isAuthenticated}
+                isProviderConnected={isProviderConnected}
+                onConnectProvider={handleConnectProvider}
+                onDisconnectProvider={handleDisconnectProvider}
               />
             </section>
 

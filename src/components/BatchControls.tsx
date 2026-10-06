@@ -39,6 +39,7 @@ import {
   fetchVoiceLibrary,
   addSharedVoiceToAccount,
 } from "../services/gateway";
+import { VoiceProviderSection } from "./VoiceProviderSection";
 import {
   OFFICIAL_LANGUAGES,
   USE_CASE_OPTIONS,
@@ -81,6 +82,9 @@ export interface BatchControlsProps {
   readyCount: number;
   totalCount: number;
   isAuthenticated?: boolean;
+  isProviderConnected?: boolean;
+  onConnectProvider?: (apiKey: string) => Promise<{ ok: boolean; message?: string }>;
+  onDisconnectProvider?: () => Promise<void>;
 }
 
 export const BatchControls: React.FC<BatchControlsProps> = ({
@@ -105,6 +109,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   readyCount,
   totalCount,
   isAuthenticated = false,
+  isProviderConnected = false,
+  onConnectProvider,
+  onDisconnectProvider,
 }) => {
   // Global Audio Preview Singleton Player
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -938,6 +945,18 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       </div>
 
       {/* ────────────────────────────────────────────────────────── */}
+      {/* 4.5 SECCIÓN PROVEEDOR DE VOZ (BYOK ELEVENLABS)            */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {onConnectProvider && onDisconnectProvider && (
+        <VoiceProviderSection
+          isProviderConnected={isProviderConnected}
+          onConnect={onConnectProvider}
+          onDisconnect={onDisconnectProvider}
+          isAuthenticated={isAuthenticated}
+        />
+      )}
+
+      {/* ────────────────────────────────────────────────────────── */}
       {/* 5. MODELO Y FORMATO CON CONFIGURACIÓN AVANZADA             */}
       {/* ────────────────────────────────────────────────────────── */}
       <div className="technical-controls-grid">
@@ -1090,15 +1109,23 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           ) : (
             <button
               type="button"
-              className={`btn-generate-main ${!isAuthenticated ? "btn-auth-locked" : ""}`}
+              className={`btn-generate-main ${!isAuthenticated || !isProviderConnected ? "btn-auth-locked" : ""}`}
               onClick={onGenerateAll}
-              disabled={totalCount === 0 || readyCount === totalCount || !isAuthenticated}
-              title={!isAuthenticated ? "Conecta tu acceso para usar esta acción" : undefined}
+              disabled={totalCount === 0 || readyCount === totalCount || !isAuthenticated || !isProviderConnected}
+              title={
+                !isAuthenticated
+                  ? "Conecta tu acceso para usar esta acción"
+                  : !isProviderConnected
+                  ? "Conecta ElevenLabs para generar narraciones."
+                  : undefined
+              }
             >
               <Volume2 size={18} className="mr-2" />
               <span>
                 {!isAuthenticated
                   ? "Conecta tu acceso para usar esta acción"
+                  : !isProviderConnected
+                  ? "Conecta ElevenLabs para generar narraciones."
                   : `Generar Todas las Narraciones (${readyCount}/${totalCount})`}
               </span>
             </button>
