@@ -14,11 +14,15 @@ import {
 export interface OperatorAccessProps {
   isAuthenticated: boolean;
   onAuthStateChange: (authenticated: boolean) => void;
+  clientName?: string | null;
+  onClientNameChange?: (name: string | null) => void;
 }
 
 export const OperatorAccess: React.FC<OperatorAccessProps> = ({
   isAuthenticated,
   onAuthStateChange,
+  clientName,
+  onClientNameChange,
 }) => {
   const [tokenInput, setTokenInput] = useState<string>("");
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
@@ -41,15 +45,18 @@ export const OperatorAccess: React.FC<OperatorAccessProps> = ({
         setGatewayAuthToken(trimmed);
         setTokenInput(""); // Immediately clear plain text password from component memory
         setErrorMsg(null);
+        onClientNameChange?.(result.clientName || null);
         onAuthStateChange(true);
       } else {
         clearGatewayAuthToken();
         setErrorMsg(result.message || "Clave no autorizada.");
+        onClientNameChange?.(null);
         onAuthStateChange(false);
       }
     } catch (err) {
       clearGatewayAuthToken();
       setErrorMsg(`Error de conexión: ${(err as Error).message}`);
+      onClientNameChange?.(null);
       onAuthStateChange(false);
     } finally {
       setIsVerifying(false);
@@ -60,6 +67,7 @@ export const OperatorAccess: React.FC<OperatorAccessProps> = ({
     clearGatewayAuthToken();
     setTokenInput("");
     setErrorMsg(null);
+    onClientNameChange?.(null);
     onAuthStateChange(false);
   };
 
@@ -68,7 +76,9 @@ export const OperatorAccess: React.FC<OperatorAccessProps> = ({
       <div className="operator-access-card connected">
         <div className="operator-connected-info">
           <ShieldCheck size={16} className="text-emerald mr-1.5" />
-          <span className="operator-status-text">Operador Conectado</span>
+          <span className="operator-status-text">
+            {clientName ? `Conectado como: ${clientName}` : "Operador Conectado"}
+          </span>
         </div>
         <button
           type="button"
@@ -89,8 +99,10 @@ export const OperatorAccess: React.FC<OperatorAccessProps> = ({
         <KeyRound size={14} className="operator-key-icon" />
         <input
           type="password"
+          id="ghostai-token-input"
           className="operator-key-input"
-          placeholder="Clave de acceso de GhostAI"
+          placeholder="Clave de acceso de GhostAI (gai_live_... o token)"
+          data-testid="ghostai-token-input"
           value={tokenInput}
           onChange={(e) => {
             setTokenInput(e.target.value);

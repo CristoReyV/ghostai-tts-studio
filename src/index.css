@@ -3903,3 +3903,286 @@ button {
   background: var(--accent-primary);
 }
 
+
+
+/* ==========================================================================
+   CONNECTION ALERT BANNER & COMPACT STATUS BADGES
+   ========================================================================== */
+
+.connection-alert-container {
+  max-width: 1400px;
+  margin: 1rem auto 0;
+  padding: 0 1.5rem;
+  animation: fadeInDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.connection-alert-card {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.08) 0%, rgba(20, 24, 38, 0.95) 100%);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 24px rgba(244, 63, 94, 0.12);
+  backdrop-filter: blur(12px);
+  position: relative;
+  overflow: hidden;
+}
+
+.connection-alert-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: var(--rose);
+}
+
+.connection-alert-card.card-amber {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(20, 24, 38, 0.95) 100%);
+  border-color: rgba(245, 158, 11, 0.28);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 24px rgba(245, 158, 11, 0.12);
+}
+
+.connection-alert-card.card-amber::before {
+  background: var(--amber);
+}
+
+.connection-alert-header {
+  margin-bottom: 1rem;
+}
+
+.alert-title-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.alert-icon-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.alert-icon-badge.badge-warning {
+  background: rgba(244, 63, 94, 0.18);
+  color: var(--rose);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.alert-icon-badge.badge-amber {
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--amber);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.alert-title {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-main);
+  margin: 0 0 0.25rem;
+}
+
+.alert-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.connection-checklist-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.connection-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.9rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.2s ease;
+}
+
+.connection-check-row.active-required {
+  border-color: rgba(99, 102, 241, 0.25);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.connection-check-row.row-completed {
+  border-color: rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.connection-check-row.row-disabled {
+  opacity: 0.65;
+}
+
+.check-row-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.check-status-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.check-status-indicator .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rose);
+  box-shadow: 0 0 8px var(--rose-glow);
+  display: inline-block;
+}
+
+.check-status-indicator .status-dot.dot-amber {
+  background: var(--amber);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+}
+
+.check-service-name {
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-right: 0.75rem;
+}
+
+.check-status-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.check-status-label.text-warning {
+  color: var(--rose);
+}
+
+.check-status-label.text-amber {
+  color: var(--amber);
+}
+
+.check-status-label.text-emerald {
+  color: var(--emerald);
+}
+
+.check-status-label.text-dim {
+  color: var(--text-dim);
+}
+
+.check-lock-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.btn-alert-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-cta-primary {
+  background: var(--accent-gradient);
+  color: #ffffff;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+.btn-cta-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px var(--accent-glow);
+}
+
+.btn-cta-amber {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #0b0f19;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.3);
+}
+
+.btn-cta-amber:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.45);
+}
+
+.badge-identity-verified {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--emerald);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+}
+
+/* Compact Badges in Header */
+.header-connection-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.badge-compact-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+}
+
+.badge-ghostai-status {
+  background: rgba(99, 102, 241, 0.14);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.28);
+}
+
+.badge-elevenlabs-status {
+  background: rgba(16, 185, 129, 0.14);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.section-standalone-provider {
+  max-width: 1400px;
+  margin: 1.5rem auto 0;
+  padding: 0 1.5rem;
+}

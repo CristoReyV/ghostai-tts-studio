@@ -74,7 +74,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
   };
 
   return (
-    <div className={`voice-provider-card ${isProviderConnected ? "is-connected" : "is-disconnected"}`}>
+    <div id="voice-provider-section" data-testid="voice-provider-section" className={`voice-provider-card ${isProviderConnected ? "is-connected" : "is-disconnected"}`}>
       <div className="provider-card-header">
         <div className="provider-eyebrow-row">
           <span className="section-eyebrow">
@@ -134,6 +134,8 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
               <KeyRound size={15} className="provider-input-icon" />
               <input
                 type={showKey ? "text" : "password"}
+                id="elevenlabs-api-key-input"
+                data-testid="elevenlabs-key-input"
                 className="provider-key-input"
                 placeholder="sk_••••••••••••"
                 value={keyInput}

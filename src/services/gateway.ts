@@ -27,6 +27,15 @@ export const OPERATOR_TOKEN_STORAGE_KEY = "ghostai_tts_operator_access";
 
 let memorySessionToken: string | null = null;
 
+let onAuthExpiredCallback: (() => void) | null = null;
+
+/**
+ * Registers a global callback for 401 session expirations.
+ */
+export function setOnAuthExpired(cb: (() => void) | null): void {
+  onAuthExpiredCallback = cb;
+}
+
 /**
  * Reads operator auth token from sessionStorage.
  * Includes guard for test environments where window.sessionStorage is undefined.
@@ -70,6 +79,7 @@ export function clearGatewayAuthToken(): void {
     } catch {}
   }
   memorySessionToken = null;
+  onAuthExpiredCallback?.();
 }
 
 /**
@@ -80,7 +90,7 @@ export function clearGatewayAuthToken(): void {
 export async function verifyGatewayAuthToken(
   token: string,
   signal?: AbortSignal
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; authMode?: string; clientName?: string }> {
   if (!token || !token.trim()) {
     return { ok: false, message: "La clave de acceso no puede estar vacía." };
   }
@@ -98,7 +108,14 @@ export async function verifyGatewayAuthToken(
     });
 
     if (res.ok) {
-      return { ok: true };
+      let authMode: string | undefined;
+      let clientName: string | undefined;
+      try {
+        const body = await res.json();
+        authMode = body?.authMode;
+        clientName = body?.client?.name;
+      } catch {}
+      return { ok: true, authMode, clientName };
     }
 
     if (res.status === 401) {

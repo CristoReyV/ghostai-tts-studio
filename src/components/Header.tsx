@@ -15,6 +15,9 @@ interface HeaderProps {
   onRefreshHealth: () => void;
   isAuthenticated: boolean;
   onAuthStateChange: (authenticated: boolean) => void;
+  isProviderConnected?: boolean;
+  clientName?: string | null;
+  onClientNameChange?: (name: string | null) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,6 +26,9 @@ export const Header: React.FC<HeaderProps> = ({
   onRefreshHealth,
   isAuthenticated,
   onAuthStateChange,
+  isProviderConnected = false,
+  clientName,
+  onClientNameChange,
 }) => {
   const gatewayUrl = getGatewayBaseUrl();
 
@@ -46,9 +52,33 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="header-right">
+        {/* Compact Badges when connected */}
+        <div className="header-connection-badges" data-testid="header-connection-badges">
+          {isAuthenticated && (
+            <span
+              className="badge-compact-status badge-ghostai-status"
+              data-testid="header-ghostai-badge"
+              title={`GhostAI Conectado${clientName ? ` (${clientName})` : ""}`}
+            >
+              GhostAI ✓{clientName ? ` · ${clientName}` : ""}
+            </span>
+          )}
+          {isProviderConnected && (
+            <span
+              className="badge-compact-status badge-elevenlabs-status"
+              data-testid="header-elevenlabs-badge"
+              title="ElevenLabs Conectado"
+            >
+              ElevenLabs ✓
+            </span>
+          )}
+        </div>
+
         <OperatorAccess
           isAuthenticated={isAuthenticated}
           onAuthStateChange={onAuthStateChange}
+          clientName={clientName}
+          onClientNameChange={onClientNameChange}
         />
 
         <div className={`gateway-status-card ${isHealthy ? "status-online" : "status-warning"}`}>

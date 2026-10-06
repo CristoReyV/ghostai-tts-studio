@@ -23,6 +23,8 @@ import {
   connectElevenLabs,
   checkElevenLabsStatus,
   disconnectElevenLabs,
+  verifyGatewayAuthToken,
+  setOnAuthExpired,
 } from "./services/gateway";
 import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
 import {
@@ -31,6 +33,8 @@ import {
   formatVoiceAvailabilityError,
 } from "./services/voiceLibrary";
 import { Header } from "./components/Header";
+import { ConnectionAlert } from "./components/ConnectionAlert";
+import { VoiceProviderSection } from "./components/VoiceProviderSection";
 import { ProjectImporter } from "./components/ProjectImporter";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { BatchControls } from "./components/BatchControls";
@@ -40,6 +44,8 @@ import { AlertCircle, CheckCircle, Info } from "lucide-react";
 export const App: React.FC = () => {
   // Operator authentication state (session-only)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getGatewayAuthToken()));
+  const [clientName, setClientName] = useState<string | null>(null);
+  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
 
   // BYOK ElevenLabs connection state (session-only via HttpOnly cookie)
   const [isProviderConnected, setIsProviderConnected] = useState<boolean>(false);
@@ -130,6 +136,63 @@ export const App: React.FC = () => {
   useEffect(() => {
     loadGatewayData();
   }, [loadGatewayData]);
+
+  // Verify token on mount to populate client.name and detect expired token
+  useEffect(() => {
+    const token = getGatewayAuthToken();
+    if (token) {
+      verifyGatewayAuthToken(token).then((res) => {
+        if (res.ok) {
+          setClientName(res.clientName || null);
+          setAuthErrorMessage(null);
+        } else {
+          clearGatewayAuthToken();
+          setIsAuthenticated(false);
+          setClientName(null);
+          setIsProviderConnected(false);
+          setAuthErrorMessage("Tu acceso expiró o ya no es válido. Vuelve a conectarte.");
+        }
+      });
+    }
+  }, []);
+
+  // Listen for global 401 token expiration events
+  useEffect(() => {
+    setOnAuthExpired(() => {
+      setIsAuthenticated(false);
+      setClientName(null);
+      setIsProviderConnected(false);
+      setAuthErrorMessage("Tu acceso expiró o ya no es válido. Vuelve a conectarte.");
+    });
+    return () => setOnAuthExpired(null);
+  }, []);
+
+  // CTA navigation helpers for ConnectionAlert
+  const handleFocusGhostAILogin = useCallback(() => {
+    const input =
+      (document.getElementById("ghostai-token-input") as HTMLInputElement | null) ||
+      (document.querySelector(".operator-key-input") as HTMLInputElement | null);
+    if (input) {
+      input.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => input.focus(), 300);
+    }
+  }, []);
+
+  const handleFocusElevenLabs = useCallback(() => {
+    const input =
+      (document.getElementById("elevenlabs-api-key-input") as HTMLInputElement | null) ||
+      (document.querySelector(".provider-key-input") as HTMLInputElement | null);
+    if (input) {
+      input.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => input.focus(), 300);
+    } else {
+      const section =
+        document.getElementById("voice-provider-section") ||
+        document.querySelector(".voice-provider-card");
+      section?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, []);
+
 
   // Check BYOK ElevenLabs connection status whenever authentication changes
   useEffect(() => {
@@ -553,7 +616,28 @@ export const App: React.FC = () => {
         checkingHealth={checkingHealth}
         onRefreshHealth={loadGatewayData}
         isAuthenticated={isAuthenticated}
-        onAuthStateChange={setIsAuthenticated}
+        onAuthStateChange={(auth) => {
+          setIsAuthenticated(auth);
+          if (!auth) {
+            setClientName(null);
+            setIsProviderConnected(false);
+          } else {
+            setAuthErrorMessage(null);
+          }
+        }}
+        isProviderConnected={isProviderConnected}
+        clientName={clientName}
+        onClientNameChange={setClientName}
+      />
+
+      {/* Connection Alert Banner — immediately beneath Header */}
+      <ConnectionAlert
+        isAuthenticated={isAuthenticated}
+        isProviderConnected={isProviderConnected}
+        clientName={clientName}
+        authErrorMessage={authErrorMessage}
+        onConnectGhostAIClick={handleFocusGhostAILogin}
+        onConnectElevenLabsClick={handleFocusElevenLabs}
       />
 
       {/* Main Content Area */}
@@ -566,6 +650,18 @@ export const App: React.FC = () => {
             onResetProject={handleResetProject}
           />
         </section>
+
+        {/* Standalone Voice Provider Section if GhostAI is connected but no project loaded yet */}
+        {!currentProject && isAuthenticated && (
+          <section className="section-standalone-provider" id="voice-provider-section">
+            <VoiceProviderSection
+              isProviderConnected={isProviderConnected}
+              onConnect={handleConnectProvider}
+              onDisconnect={handleDisconnectProvider}
+              isAuthenticated={isAuthenticated}
+            />
+          </section>
+        )}
 
         {currentProject && (
           <>
