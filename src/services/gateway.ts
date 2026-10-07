@@ -148,6 +148,12 @@ export interface GenerateAudioParams {
   outputFormat?: string;
   languageCode?: string;
   signal?: AbortSignal;
+  sessionId?: string;
+  projectId?: string;
+  projectTitle?: string;
+  narrationId?: string;
+  sceneId?: string;
+  sceneIndex?: number;
 }
 
 export interface GenerateAudioResult {
@@ -155,6 +161,9 @@ export interface GenerateAudioResult {
   requestId: string;
   outputFormat: string;
   durationMs: number;
+  sessionId?: string | null;
+  sha256?: string | null;
+  recoveryWarning?: string | null;
 }
 
 export class TtsGatewayError extends Error {
@@ -262,6 +271,12 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     outputFormat: params.outputFormat || "mp3_44100_128",
     ...(params.languageCode ? { languageCode: params.languageCode } : {}),
     ...(params.voiceSettings ? { voiceSettings: params.voiceSettings } : {}),
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    ...(params.projectId ? { projectId: params.projectId } : {}),
+    ...(params.projectTitle ? { projectTitle: params.projectTitle } : {}),
+    ...(params.narrationId ? { narrationId: params.narrationId } : {}),
+    ...(params.sceneId ? { sceneId: params.sceneId } : {}),
+    ...(typeof params.sceneIndex === "number" ? { sceneIndex: params.sceneIndex } : {}),
   };
 
   const startTime = performance.now();
@@ -279,6 +294,9 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
   const durationMs = Math.round(performance.now() - startTime);
   const requestId = res.headers.get("X-TTS-Request-ID") || "";
   const outputFormat = res.headers.get("X-TTS-Output-Format") || payload.outputFormat;
+  const sessionId = res.headers.get("X-TTS-Session-ID") || undefined;
+  const sha256 = res.headers.get("X-TTS-Audio-SHA256") || undefined;
+  const recoveryWarning = res.headers.get("X-TTS-Recovery-Warning") || undefined;
 
   if (!res.ok) {
     let errMsg = `Error HTTP ${res.status} al generar audio`;
@@ -316,6 +334,9 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     requestId,
     outputFormat,
     durationMs,
+    sessionId,
+    sha256,
+    recoveryWarning,
   };
 }
 

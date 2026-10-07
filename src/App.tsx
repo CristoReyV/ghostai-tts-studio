@@ -12,6 +12,7 @@ import type {
   GatewayVoice,
   GhostAiTtsFile,
   StudioNarrationItem,
+  ZipDownloadStatus,
 } from "./types/tts";
 import {
   checkGatewayHealth,
@@ -30,12 +31,16 @@ import { buildGhostAiTtsPackage, downloadBlob } from "./services/zipBuilder";
 import {
   isEmbeddedFrame,
   isDownloadReceiverMode,
+  isAdminMode,
   generateBridgeId,
   GHOSTAI_MESSAGE_TYPES,
   type GhostAiZipTransferPayload,
 } from "./utils/environment";
 import { saveActiveSession, loadActiveSession, clearActiveSession } from "./services/projectStorage";
 import { DownloadReceiver } from "./components/DownloadReceiver";
+import { AdminDashboard } from "./components/Admin/AdminDashboard";
+import { RecoveryVaultSection } from "./components/RecoveryVaultSection";
+import { ZipVerificationCard } from "./components/ZipVerificationCard";
 import {
   type OfficialCategory,
   type VoiceAvailabilityMap,
@@ -54,6 +59,22 @@ export const App: React.FC = () => {
   const isReceiverMode = useMemo(() => isDownloadReceiverMode(), []);
   if (isReceiverMode) {
     return <DownloadReceiver />;
+  }
+
+  const [adminMode, setAdminMode] = useState<boolean>(() => isAdminMode());
+  if (adminMode) {
+    return (
+      <AdminDashboard
+        onBackToStudio={() => {
+          setAdminMode(false);
+          try {
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }
+          } catch (_) {}
+        }}
+      />
+    );
   }
 
   const isEmbedded = useMemo(() => isEmbeddedFrame(), []);
@@ -92,6 +113,11 @@ export const App: React.FC = () => {
     type: "success" | "error" | "info" | "warning";
     message: string;
   } | null>(null);
+
+  // Control Plane 01: Download State Machine & Recovery tracking
+  const [zipStatus, setZipStatus] = useState<ZipDownloadStatus>("not_prepared");
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [expectedHashes, setExpectedHashes] = useState<Array<{ narrationId: string; sha256?: string | null }>>([]);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const itemsRef = useRef<StudioNarrationItem[]>([]);
@@ -370,6 +396,9 @@ export const App: React.FC = () => {
     cleanupAudioUrls(items);
     setCurrentProject(null);
     setItems([]);
+    setZipStatus("not_prepared");
+    setCurrentSessionId(null);
+    setExpectedHashes([]);
     clearActiveSession();
   };
 
@@ -473,7 +502,26 @@ export const App: React.FC = () => {
           voiceSettings: currentItem.voiceSettings,
           languageCode: currentItem.language,
           signal: controller.signal,
+          sessionId: currentSessionId || undefined,
+          projectId: currentProject?.project.name,
+          projectTitle: currentProject?.project.name,
+          narrationId: currentItem.id,
+          sceneId: currentItem.sceneId,
+          sceneIndex: currentItem.sceneIndex,
         });
+
+        if (genResult.sessionId && !currentSessionId) {
+          setCurrentSessionId(genResult.sessionId);
+        }
+        if (genResult.sha256) {
+          setExpectedHashes((prev) => [
+            ...prev.filter((h) => h.narrationId !== currentItem.id),
+            { narrationId: currentItem.id, sha256: genResult.sha256 },
+          ]);
+        }
+        if (genResult.recoveryWarning === "RECOVERY_STORAGE_FAILED") {
+          showNotification("warning", "Audio generado correctamente. No se pudo crear la copia temporal de recuperación.");
+        }
 
         // Revoke previous audioUrl if re-generating
         if (currentItem.audioUrl) {
@@ -756,6 +804,8 @@ export const App: React.FC = () => {
         "warning",
         "Entorno embebido (sandbox) detectado: el navegador bloquea descargas directas en este marco. Abriendo receptor seguro en pestaña nueva..."
       );
+      setZipStatus("download_triggered");
+      setTimeout(() => setZipStatus("verification_pending"), 50);
       handleOpenTopLevel();
       return;
     }
@@ -767,12 +817,17 @@ export const App: React.FC = () => {
         includeOnlyReady: true,
       });
 
+      setZipStatus("prepared");
       downloadBlob(result.blob, result.fileName);
+      setZipStatus("download_triggered");
+      setTimeout(() => setZipStatus("verification_pending"), 50);
+
       showNotification(
         "success",
         `Paquete '${result.fileName}' exportado correctamente (${result.itemCount} audios).`
       );
     } catch (err) {
+      setZipStatus("failed");
       showNotification("error", `Error al crear archivo ZIP: ${(err as Error).message}`);
     }
   };
@@ -846,6 +901,22 @@ export const App: React.FC = () => {
           </section>
         )}
 
+        {/* Standalone Temporary Recovery Vault when no project loaded */}
+        {!currentProject && isAuthenticated && (
+          <section className="section-standalone-recovery" style={{ maxWidth: "1200px", margin: "0 auto", padding: "0 1.5rem" }}>
+            <RecoveryVaultSection
+              isAuthenticated={isAuthenticated}
+              hasActiveProject={false}
+              onRestoreProject={(restoredProject, restoredItems) => {
+                setCurrentProject(restoredProject);
+                setItems(restoredItems);
+                setZipStatus("not_prepared");
+              }}
+              onNotification={showNotification}
+            />
+          </section>
+        )}
+
         {currentProject && (
           <>
             {/* Overview Stats */}
@@ -886,6 +957,31 @@ export const App: React.FC = () => {
                 isEmbedded={isEmbedded}
                 onOpenTopLevel={handleOpenTopLevel}
               />
+
+              {/* ZIP Verification CTA & Feedback Card */}
+              <ZipVerificationCard
+                status={zipStatus}
+                currentSessionId={currentSessionId}
+                expectedItemCount={readyItemsCount}
+                expectedItems={expectedHashes}
+                onStatusChange={setZipStatus}
+                onRetryDownload={handleExportZip}
+                onNotification={showNotification}
+              />
+            </section>
+
+            {/* Temporary Recovery Vault Section */}
+            <section className="section-project-recovery" style={{ maxWidth: "1200px", margin: "0 auto", padding: "0 1.5rem" }}>
+              <RecoveryVaultSection
+                isAuthenticated={isAuthenticated}
+                hasActiveProject={true}
+                onRestoreProject={(restoredProject, restoredItems) => {
+                  setCurrentProject(restoredProject);
+                  setItems(restoredItems);
+                  setZipStatus("not_prepared");
+                }}
+                onNotification={showNotification}
+              />
             </section>
 
             {/* Narration Table */}
@@ -910,6 +1006,9 @@ export const App: React.FC = () => {
         <p>
           GhostAI TTS Studio • Conectado a{" "}
           <span className="footer-code">https://tts-test.smartbrain.lat</span> • Compatible con exportación GhostAI
+          <span style={{ marginLeft: "1.25rem" }}>
+            • <a href="?mode=admin" onClick={(e) => { e.preventDefault(); setAdminMode(true); }} style={{ color: "#38bdf8", textDecoration: "none", cursor: "pointer", fontWeight: "600" }}>GhostAI Admin</a>
+          </span>
         </p>
       </footer>
     </div>

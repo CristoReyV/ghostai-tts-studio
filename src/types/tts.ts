@@ -159,3 +159,60 @@ export interface AddSharedVoiceResponse {
   category?: string;
   [key: string]: unknown;
 }
+
+// ── Control Plane 01: Download State Machine ────────────────────────────────
+export type ZipDownloadStatus =
+  | "not_prepared"
+  | "prepared"
+  | "download_triggered"
+  | "verification_pending"
+  | "verified"
+  | "failed";
+
+// ── Control Plane 01: Temporary Recovery Vault ─────────────────────────────
+export interface RecoverySessionSummary {
+  id: string;
+  projectId?: string | null;
+  projectTitle?: string | null;
+  status: string;
+  itemCount: number;
+  readyCount: number;
+  errorCount: number;
+  zipStatus: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface RecoveryItem {
+  id: string;
+  narrationId: string;
+  sceneId: string | null;
+  sceneIndex: number | null;
+  status: string;
+  hasAudio: boolean;
+  sha256?: string | null;
+  sizeBytes?: number | null;
+  mimeType?: string;
+  voiceId?: string | null;
+  modelId?: string | null;
+  outputFormat?: string | null;
+  durationSeconds?: number | null;
+  text?: string | null;
+}
+
+// ── Control Plane 01: ZIP Verifier ─────────────────────────────────────────
+export interface ZipVerificationResult {
+  ok: boolean;
+  error?: string;
+  errorCode?: string;
+  details?: {
+    format: string;
+    version: string;
+    fileName: string;
+    totalItems: number;
+    verifiedItems: number;
+    packageSha256: string;
+    itemHashesMatch?: boolean;
+  };
+}
+

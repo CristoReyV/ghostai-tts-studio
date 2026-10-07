@@ -75,6 +75,21 @@ export function isDownloadReceiverMode(): boolean {
 }
 
 /**
+ * Checks whether the current window is in GhostAI Admin mode (?mode=admin).
+ */
+export function isAdminMode(): boolean {
+  if (typeof window === "undefined" || !window.location) {
+    return false;
+  }
+  try {
+    return window.location.search.includes("mode=admin");
+  } catch {
+    return false;
+  }
+}
+
+
+/**
  * Extracts ephemeral bridge pairing ID from current URL query parameters.
  */
 export function getBridgeIdFromUrl(): string | null {
