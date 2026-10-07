@@ -164,7 +164,7 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <Archive size={18} className="text-cyan-400" />
           <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc" }}>
-            RECUPERACIÓN TEMPORAL (RECOVERY VAULT)
+            RECUPERACIÓN TEMPORAL
           </h3>
         </div>
         <button
@@ -177,7 +177,7 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
       </div>
 
       <p style={{ margin: "0 0 1rem 0", fontSize: "0.75rem", color: "#94a3b8", lineHeight: "1.4" }}>
-        GhostAI conserva temporalmente tus narraciones para permitir recuperación y reintentos de descarga sin volver a consumir caracteres de ElevenLabs durante su ventana de validez.
+        GhostAI conserva temporalmente tus narraciones para que puedas restaurarlas sin volver a generarlas.
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.75rem" }}>
@@ -215,7 +215,7 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
               <button
                 onClick={() => handleDelete(session.id)}
                 style={{ padding: "0.4rem 0.6rem", background: "rgba(244, 63, 94, 0.1)", border: "1px solid rgba(244, 63, 94, 0.3)", borderRadius: "4px", color: "#fda4af", fontSize: "0.75rem", cursor: "pointer" }}
-                title="Eliminar del vault"
+                title="Eliminar"
               >
                 <Trash2 size={13} />
               </button>

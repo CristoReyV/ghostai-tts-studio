@@ -205,7 +205,7 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
           />
         ) : isCurrentGenerating ? (
           <div className="audio-generating-placeholder">
-            <span className="pulse-text">Sintetizando voz en Gateway...</span>
+            <span className="pulse-text">Sintetizando narración...</span>
           </div>
         ) : (
           <span className="audio-empty-placeholder">Sin audio generado</span>

@@ -343,6 +343,7 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
 export interface ByokStatusResponse {
   connected: boolean;
   provider?: string;
+  tier?: string;
 }
 
 export interface ByokConnectResponse {

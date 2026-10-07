@@ -183,7 +183,7 @@ export const ZipVerificationCard: React.FC<ZipVerificationCardProps> = ({
           </p>
 
           <p style={{ margin: "0 0 1rem 0", fontSize: "0.75rem", color: "#94a3b8" }}>
-            Los audios siguen seguros localmente y en el Recovery Vault. Puedes reintentar la descarga sin regenerar ni consumir caracteres adicionales.
+            Los audios siguen seguros localmente y en la recuperación temporal. Puedes reintentar la descarga sin regenerar ni consumir caracteres adicionales.
           </p>
 
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>

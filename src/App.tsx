@@ -45,6 +45,7 @@ import {
   type OfficialCategory,
   type VoiceAvailabilityMap,
   formatVoiceAvailabilityError,
+  checkVoicePlanAvailability,
 } from "./services/voiceLibrary";
 import { Header } from "./components/Header";
 import { ConnectionAlert } from "./components/ConnectionAlert";
@@ -88,6 +89,7 @@ export const App: React.FC = () => {
 
   // BYOK ElevenLabs connection state (session-only via HttpOnly cookie)
   const [isProviderConnected, setIsProviderConnected] = useState<boolean>(false);
+  const [providerTier, setProviderTier] = useState<string | null>(null);
 
   // Gateway states
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealth | null>(null);
@@ -369,11 +371,13 @@ export const App: React.FC = () => {
       .then((status) => {
         if (isMounted) {
           setIsProviderConnected(Boolean(status?.connected));
+          setProviderTier(status?.tier || null);
         }
       })
       .catch(() => {
         if (isMounted) {
           setIsProviderConnected(false);
+          setProviderTier(null);
         }
       });
 
@@ -531,6 +535,25 @@ export const App: React.FC = () => {
       );
 
       const voiceToUse = currentItem.voiceId || selectedVoiceId || voices[0]?.voiceId;
+
+      // UX 02: Prevent late error - verify availability against provider capabilities before dispatching synthesis request
+      const voiceObj = voices.find((v) => v.voiceId === voiceToUse);
+      if (voiceObj) {
+        const planCheck = checkVoicePlanAvailability(voiceObj, providerTier);
+        if (planCheck.availability === "restricted") {
+          failCount++;
+          const friendlyMsg =
+            planCheck.reason ||
+            "Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.";
+          setItems((prev) =>
+            prev.map((it) =>
+              it.id === itemId ? { ...it, status: "ERROR", error: friendlyMsg } : it
+            )
+          );
+          showNotification("warning", friendlyMsg);
+          continue; // ZERO calls to ElevenLabs!
+        }
+      }
 
       try {
         if (!voiceToUse) {
@@ -1011,6 +1034,7 @@ export const App: React.FC = () => {
               onConnect={handleConnectProvider}
               onDisconnect={handleDisconnectProvider}
               isAuthenticated={isAuthenticated}
+              providerTier={providerTier}
             />
           </section>
         )}
@@ -1118,11 +1142,7 @@ export const App: React.FC = () => {
       {/* Footer */}
       <footer className="app-footer">
         <p>
-          GhostAI TTS Studio • Conectado a{" "}
-          <span className="footer-code">https://tts-test.smartbrain.lat</span> • Compatible con exportación GhostAI
-          <span style={{ marginLeft: "1.25rem" }}>
-            • <a href="?mode=admin" onClick={(e) => { e.preventDefault(); setAdminMode(true); }} style={{ color: "#38bdf8", textDecoration: "none", cursor: "pointer", fontWeight: "600" }}>GhostAI Admin</a>
-          </span>
+          GhostAI TTS Studio • <span className="powered-by-brand">Powered by SmartBrain</span>
         </p>
       </footer>
     </div>

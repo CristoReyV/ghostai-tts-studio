@@ -2,11 +2,7 @@
  * @file src/components/VoiceProviderSection.tsx
  * Clean, secure BYOK (Bring-Your-Own-Key) management section for ElevenLabs.
  *
- * Security:
- *  - Sends the key once to the Gateway via HTTPS with credentials: 'include'.
- *  - Frontend NEVER stores the key in localStorage, sessionStorage, or persistent state.
- *  - Clears input state immediately upon submission.
- *  - Never displays masked keys (••••abcd) because the frontend does not retain the secret.
+ * Public UI: Zero exposure of gateway URLs, internal endpoints, or technical cookies.
  */
 
 import React, { useState } from "react";
@@ -17,6 +13,7 @@ export interface VoiceProviderSectionProps {
   onConnect: (apiKey: string) => Promise<{ ok: boolean; message?: string }>;
   onDisconnect: () => Promise<void>;
   isAuthenticated: boolean;
+  providerTier?: string | null;
 }
 
 export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
@@ -24,6 +21,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
   onConnect,
   onDisconnect,
   isAuthenticated,
+  providerTier,
 }) => {
   const [keyInput, setKeyInput] = useState<string>("");
   const [showKey, setShowKey] = useState<boolean>(false);
@@ -39,7 +37,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
     }
 
     if (!isAuthenticated) {
-      setErrorMessage("Conecta primero tu acceso de operador en la cabecera antes de conectar ElevenLabs.");
+      setErrorMessage("Conecta primero tu acceso en la cabecera antes de conectar ElevenLabs.");
       return;
     }
 
@@ -49,7 +47,6 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
     try {
       const res = await onConnect(clean);
       if (res.ok) {
-        // Immediately clear key from component state
         setKeyInput("");
         setShowKey(false);
         setErrorMessage(null);
@@ -73,6 +70,12 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
     }
   };
 
+  const tierLabel = providerTier
+    ? providerTier.toLowerCase() === "free"
+      ? "Gratis"
+      : providerTier.charAt(0).toUpperCase() + providerTier.slice(1)
+    : null;
+
   return (
     <div id="voice-provider-section" data-testid="voice-provider-section" className={`voice-provider-card ${isProviderConnected ? "is-connected" : "is-disconnected"}`}>
       <div className="provider-card-header">
@@ -83,8 +86,13 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
           </span>
           <div className="provider-badges">
             <span className="provider-name-badge">ElevenLabs</span>
+            {tierLabel && isProviderConnected && (
+              <span className="provider-tier-badge" data-testid="provider-tier-badge">
+                Plan {tierLabel}
+              </span>
+            )}
             {isProviderConnected ? (
-              <span className="provider-status-badge badge-connected">
+              <span className="provider-status-badge badge-connected" data-testid="provider-status-connected">
                 <CheckCircle2 size={12} className="inline mr-1 text-emerald" />
                 ✓ Conectado
               </span>
@@ -104,7 +112,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
             <div className="provider-info-text">
               <span className="provider-status-title">ElevenLabs Conectado</span>
               <p className="provider-status-desc">
-                Las generaciones utilizarán los créditos de tu propia cuenta de ElevenLabs. Tu clave está protegida del lado servidor en una cookie cifrada de sesión.
+                Tu cuenta está lista para generar narraciones.
               </p>
             </div>
             <button
@@ -112,7 +120,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
               className="btn-provider-disconnect"
               onClick={handleDisconnectClick}
               disabled={isSubmitting}
-              title="Desconectar ElevenLabs (elimina la cookie de sesión)"
+              title="Desconectar ElevenLabs"
             >
               {isSubmitting ? (
                 <Loader2 size={13} className="spin mr-1" />

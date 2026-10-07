@@ -757,21 +757,163 @@ export function getModelDescription(modelId: string, customDesc?: string): strin
   }
 }
 
+export type VoicePlanAvailability = "available" | "restricted" | "unknown";
+
+export interface VoicePlanAvailabilityResult {
+  availability: VoicePlanAvailability;
+  badgeLabel: string;
+  reason?: string;
+  isBlockedForSynthesis: boolean;
+}
+
 /**
- * Neutral error message formatter for voice availability
+ * Evaluates whether a voice is usable by the current ElevenLabs account based on
+ * real provider subscription capabilities (tier) and voice metadata.
+ *
+ * Rules:
+ * 1. Account confirmed as Free ("free"):
+ *    - Shared library voice with freeUsersAllowed === false:
+ *      -> Restricted ("PLAN REQUERIDO"). Blocked for synthesis & adding.
+ *    - Premade voice (category === "premade"):
+ *      -> Available ("DISPONIBLE GRATIS").
+ *    - Account custom voice (category === "cloned" | "generated"):
+ *      -> Available ("DISPONIBLE GRATIS").
+ *    - Shared library voice with freeUsersAllowed === true:
+ *      -> Available ("DISPONIBLE GRATIS").
+ *
+ * 2. Account confirmed as Paid (tier != "free" and != "unknown"):
+ *    - All library & account voices:
+ *      -> Available ("DISPONIBLE CON TU PLAN").
+ *
+ * 3. Account Tier Unknown / Unconnected:
+ *    - If freeUsersAllowed === false:
+ *      -> Restricted ("PLAN REQUERIDO").
+ *    - If category === "premade":
+ *      -> Available ("DISPONIBLE").
+ *    - Otherwise:
+ *      -> Unknown ("DISPONIBILIDAD POR VERIFICAR").
+ */
+export function checkVoicePlanAvailability(
+  voice: {
+    category?: string | null;
+    freeUsersAllowed?: boolean;
+    labels?: Record<string, string>;
+  },
+  tier?: string | null
+): VoicePlanAvailabilityResult {
+  const normTier = (tier || "").trim().toLowerCase();
+  const isFree = normTier === "free";
+  const isPaid = normTier.length > 0 && normTier !== "free" && normTier !== "unknown";
+
+  // If tier is confirmed as Paid
+  if (isPaid) {
+    return {
+      availability: "available",
+      badgeLabel: "DISPONIBLE CON TU PLAN",
+      isBlockedForSynthesis: false,
+    };
+  }
+
+  // Premade voices are universally available to all tiers including Free
+  if (voice.category === "premade") {
+    return {
+      availability: "available",
+      badgeLabel: isFree ? "DISPONIBLE GRATIS" : "DISPONIBLE",
+      isBlockedForSynthesis: false,
+    };
+  }
+
+  // Cloned or generated voices belonging to user's account
+  if (voice.category === "cloned" || voice.category === "generated") {
+    return {
+      availability: "available",
+      badgeLabel: isFree ? "DISPONIBLE GRATIS" : "DISPONIBLE",
+      isBlockedForSynthesis: false,
+    };
+  }
+
+  // If freeUsersAllowed is explicitly false (e.g. shared library voice on Free account)
+  if (voice.freeUsersAllowed === false) {
+    return {
+      availability: "restricted",
+      badgeLabel: "PLAN REQUERIDO",
+      reason:
+        "Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.",
+      isBlockedForSynthesis: true,
+    };
+  }
+
+  // If freeUsersAllowed is explicitly true
+  if (voice.freeUsersAllowed === true) {
+    return {
+      availability: "available",
+      badgeLabel: isFree ? "DISPONIBLE GRATIS" : "DISPONIBLE",
+      isBlockedForSynthesis: false,
+    };
+  }
+
+  // If we cannot confirm tier or voice availability
+  if (!normTier || normTier === "unknown") {
+    return {
+      availability: "unknown",
+      badgeLabel: "DISPONIBILIDAD POR VERIFICAR",
+      isBlockedForSynthesis: false,
+    };
+  }
+
+  // Default fallback for Free tier when no restriction is detected
+  return {
+    availability: "available",
+    badgeLabel: "DISPONIBLE",
+    isBlockedForSynthesis: false,
+  };
+}
+
+/**
+ * User-friendly error message formatter translating technical provider errors.
+ * Never exposes raw HTTP codes, stack traces, or internal URLs to the public UI.
  */
 export function formatVoiceAvailabilityError(statusCode?: number, rawError?: string): string {
-  if (statusCode === 502) {
-    return "No disponible actualmente";
+  const err = (rawError || "").toLowerCase();
+
+  if (
+    err.includes("voice_requires_subscription") ||
+    err.includes("requires a subscription") ||
+    err.includes("paid plan") ||
+    err.includes("subscription required") ||
+    err.includes("plan compatible")
+  ) {
+    return "Esta voz requiere un plan de ElevenLabs compatible.";
   }
-  if (statusCode === 429) {
-    return "Límite de cuota alcanzado";
+
+  if (
+    statusCode === 429 ||
+    err.includes("quota_exceeded") ||
+    err.includes("quota exceeded") ||
+    err.includes("credit") ||
+    err.includes("crédito") ||
+    err.includes("character limit")
+  ) {
+    return "Tu cuenta de ElevenLabs no tiene créditos suficientes.";
   }
-  if (statusCode === 401 || statusCode === 403) {
-    return "Acceso no autorizado";
+
+  if (
+    statusCode === 401 ||
+    err.includes("invalid_api_key") ||
+    err.includes("invalid api key") ||
+    err.includes("unauthorized") ||
+    err.includes("invalid key")
+  ) {
+    return "No pudimos validar tu conexión con ElevenLabs.";
   }
-  if (rawError && rawError.length > 0 && rawError.length < 80) {
-    return rawError;
+
+  if (statusCode === 403 || err.includes("forbidden") || err.includes("permission")) {
+    return "Esta voz requiere un plan de ElevenLabs compatible.";
   }
-  return "Error al sintetizar voz";
+
+  if (statusCode === 502 || statusCode === 503 || err.includes("bad gateway") || err.includes("unavailable")) {
+    return "El servicio de voz no está disponible temporalmente.";
+  }
+
+  return "No se pudo procesar la narración con la voz seleccionada.";
 }

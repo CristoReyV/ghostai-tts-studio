@@ -1,18 +1,19 @@
 /**
  * @file src/components/Header.tsx
- * Top navigation and live Gateway status indicator.
+ * Top navigation and discrete session status.
+ *
+ * Public UI: Zero exposure of internal gateway URLs, domains, endpoints or infrastructure.
  */
 
 import React from "react";
-import { ExternalLink, RefreshCw, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 import type { GatewayHealth } from "../types/tts";
-import { getGatewayBaseUrl } from "../services/gateway";
 import { OperatorAccess } from "./OperatorAccess";
 
 interface HeaderProps {
-  health: GatewayHealth | null;
-  checkingHealth: boolean;
-  onRefreshHealth: () => void;
+  health?: GatewayHealth | null;
+  checkingHealth?: boolean;
+  onRefreshHealth?: () => void;
   isAuthenticated: boolean;
   onAuthStateChange: (authenticated: boolean) => void;
   isProviderConnected?: boolean;
@@ -21,19 +22,12 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  health,
-  checkingHealth,
-  onRefreshHealth,
   isAuthenticated,
   onAuthStateChange,
   isProviderConnected = false,
   clientName,
   onClientNameChange,
 }) => {
-  const gatewayUrl = getGatewayBaseUrl();
-
-  const isHealthy = health?.ok && health.configured;
-
   return (
     <header className="app-header">
       <div className="header-left">
@@ -80,50 +74,6 @@ export const Header: React.FC<HeaderProps> = ({
           clientName={clientName}
           onClientNameChange={onClientNameChange}
         />
-
-        <div className={`gateway-status-card ${isHealthy ? "status-online" : "status-warning"}`}>
-          <div className="status-indicator-dot">
-            <span className={`pulse-dot ${isHealthy ? "bg-emerald" : "bg-amber"}`}></span>
-          </div>
-
-          <div className="status-info">
-            <div className="status-label-row">
-              <span className="status-text">
-                {checkingHealth
-                  ? "Verificando Gateway..."
-                  : isHealthy
-                  ? "Gateway Conectado"
-                  : health?.ok
-                  ? "Gateway Sin Configurar"
-                  : "Gateway Desconectado"}
-              </span>
-              <span className="provider-tag">{health?.provider || "elevenlabs"}</span>
-            </div>
-
-            <div className="gateway-meta-row">
-              <a
-                href={gatewayUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="gateway-link"
-                title="Abrir URL del Gateway"
-              >
-                <span>{gatewayUrl.replace(/^https?:\/\//, "")}</span>
-                <ExternalLink size={10} className="ml-1" />
-              </a>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onRefreshHealth}
-            disabled={checkingHealth}
-            className={`btn-icon-subtle ${checkingHealth ? "spin" : ""}`}
-            title="Actualizar estado del Gateway"
-          >
-            <RefreshCw size={13} />
-          </button>
-        </div>
       </div>
     </header>
   );

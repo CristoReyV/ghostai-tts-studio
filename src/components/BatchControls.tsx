@@ -54,6 +54,7 @@ import {
   translateUseCase,
   translateDescriptiveTag,
   getModelDescription,
+  checkVoicePlanAvailability,
 } from "../services/voiceLibrary";
 
 export const CATALOG_PAGE_SIZE = 12;
@@ -84,6 +85,7 @@ export interface BatchControlsProps {
   totalCount: number;
   isAuthenticated?: boolean;
   isProviderConnected?: boolean;
+  providerTier?: string | null;
   onConnectProvider?: (apiKey: string) => Promise<{ ok: boolean; message?: string }>;
   onDisconnectProvider?: () => Promise<void>;
   isEmbedded?: boolean;
@@ -113,6 +115,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   totalCount,
   isAuthenticated = false,
   isProviderConnected = false,
+  providerTier,
   onConnectProvider,
   onDisconnectProvider,
   isEmbedded = false,
@@ -130,6 +133,13 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const [isLoadingCatalog, setIsLoadingCatalog] = useState<boolean>(true);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  // Voice Library Availability Filter Tab (UX 02)
+  const [availabilityFilter, setAvailabilityFilter] = useState<"all" | "available" | "restricted">("all");
+
+  const normTier = (providerTier || "").trim().toLowerCase();
+  const isFree = normTier === "free";
+  const isPaid = normTier.length > 0 && normTier !== "free" && normTier !== "unknown";
 
   // Search State with Debounce
   const [searchInput, setSearchInput] = useState<string>("");
@@ -395,6 +405,18 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       return;
     }
 
+    // Guard: block adding shared voice if restricted on account plan (Section 22)
+    const planCheck = checkVoicePlanAvailability(voice, providerTier);
+    if (planCheck.availability === "restricted") {
+      setActionFeedback({
+        type: "error",
+        message:
+          planCheck.reason ||
+          "Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.",
+      });
+      return;
+    }
+
     // Shared voice not yet in collection -> call Gateway to add it
     setAddingVoiceId(voice.voiceId);
     try {
@@ -436,6 +458,45 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       setAddingVoiceId(null);
     }
   };
+
+  // Filtered and sorted voices according to plan availability (UX 02)
+  const displayedVoices = useMemo(() => {
+    let list = libraryVoices;
+    if (availabilityFilter === "available") {
+      list = list.filter(
+        (v) => checkVoicePlanAvailability(v, providerTier).availability === "available"
+      );
+    } else if (availabilityFilter === "restricted") {
+      list = list.filter(
+        (v) => checkVoicePlanAvailability(v, providerTier).availability === "restricted"
+      );
+    }
+    // Available voices appear first per UX 02 Section 13
+    return [...list].sort((a, b) => {
+      const aAvail = checkVoicePlanAvailability(a, providerTier).availability;
+      const bAvail = checkVoicePlanAvailability(b, providerTier).availability;
+      if (aAvail === "available" && bAvail !== "available") return -1;
+      if (aAvail !== "available" && bAvail === "available") return 1;
+      return 0;
+    });
+  }, [libraryVoices, availabilityFilter, providerTier]);
+
+  // Selected voice plan check
+  const selectedVoiceObj = useMemo(() => {
+    if (!selectedVoiceId) return null;
+    return (
+      libraryVoices.find((v) => v.voiceId === selectedVoiceId) ||
+      voices.find((v) => v.voiceId === selectedVoiceId) ||
+      null
+    );
+  }, [selectedVoiceId, libraryVoices, voices]);
+
+  const selectedVoicePlanCheck = useMemo(() => {
+    if (!selectedVoiceObj) return null;
+    return checkVoicePlanAvailability(selectedVoiceObj, providerTier);
+  }, [selectedVoiceObj, providerTier]);
+
+  const isSelectedVoiceRestricted = selectedVoicePlanCheck?.availability === "restricted";
 
   // Reset all filters to default
   const handleResetFilters = () => {
@@ -713,6 +774,34 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           </div>
         </div>
 
+        {/* UX 02: PESTAÑAS DE FILTRO POR DISPONIBILIDAD DE PLAN */}
+        <div className="availability-filter-tabs" data-testid="voice-plan-tabs">
+          <button
+            type="button"
+            className={`tab-availability-btn ${availabilityFilter === "all" ? "active" : ""}`}
+            onClick={() => setAvailabilityFilter("all")}
+            data-testid="tab-all-voices"
+          >
+            TODAS
+          </button>
+          <button
+            type="button"
+            className={`tab-availability-btn ${availabilityFilter === "available" ? "active" : ""}`}
+            onClick={() => setAvailabilityFilter("available")}
+            data-testid="tab-available-voices"
+          >
+            {isPaid ? "DISPONIBLES CON TU PLAN" : isFree ? "DISPONIBLES GRATIS" : "DISPONIBLES"}
+          </button>
+          <button
+            type="button"
+            className={`tab-availability-btn ${availabilityFilter === "restricted" ? "active" : ""}`}
+            onClick={() => setAvailabilityFilter("restricted")}
+            data-testid="tab-restricted-voices"
+          >
+            {isPaid ? "REQUIEREN PLAN SUPERIOR" : isFree ? "REQUIEREN PLAN" : "PLAN REQUERIDO"}
+          </button>
+        </div>
+
         {/* ERROR DE CARGA DE CATÁLOGO */}
         {catalogError && (
           <div className="catalog-error-card">
@@ -768,9 +857,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
         )}
 
         {/* GRID DE VOCES DE VOICE LIBRARY */}
-        {libraryVoices.length > 0 && (
+        {displayedVoices.length > 0 && (
           <div className="voice-library-grid">
-            {libraryVoices.map((voice) => {
+            {displayedVoices.map((voice) => {
               const isInCollection = accountVoiceIds.has(voice.voiceId);
               const isSelected = selectedVoiceId === voice.voiceId;
               const isPlaying = playingVoiceId === voice.voiceId;
@@ -801,6 +890,18 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                     </div>
 
                     <div className="card-status-badges">
+                      {(() => {
+                        const voicePlan = checkVoicePlanAvailability(voice, providerTier);
+                        return (
+                          <span
+                            className={`badge-plan-availability badge-plan-${voicePlan.availability}`}
+                            data-testid={`badge-plan-${voice.voiceId}`}
+                            title={voicePlan.reason || voicePlan.badgeLabel}
+                          >
+                            {voicePlan.badgeLabel}
+                          </span>
+                        );
+                      })()}
                       {isSelected && (
                         <span className="badge-selected">
                           <Check size={12} className="mr-1" /> SELECCIONADA
@@ -881,20 +982,41 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                     )}
 
                     {(() => {
+                      const voicePlan = checkVoicePlanAvailability(voice, providerTier);
+                      const isRestricted = voicePlan.availability === "restricted";
                       const isUnavailableToAdd = !isInCollection && !voice.publicOwnerId;
                       const requiresAuth = !isInCollection && !isAuthenticated;
                       return (
                         <button
                           type="button"
-                          className={`btn-card-use-voice ${isSelected ? "selected" : ""} ${requiresAuth ? "btn-auth-locked" : ""}`}
-                          onClick={() => handleUseVoice(voice)}
-                          disabled={isAdding || isUnavailableToAdd}
-                          title={requiresAuth ? "Conecta tu acceso para usar esta acción" : undefined}
+                          className={`btn-card-use-voice ${isSelected ? "selected" : ""} ${requiresAuth ? "btn-auth-locked" : ""} ${isRestricted ? "btn-plan-restricted" : ""}`}
+                          onClick={() => {
+                            if (isRestricted) {
+                              setActionFeedback({
+                                type: "error",
+                                message:
+                                  voicePlan.reason ||
+                                  "Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.",
+                              });
+                              return;
+                            }
+                            handleUseVoice(voice);
+                          }}
+                          disabled={isAdding || (isUnavailableToAdd && !isRestricted)}
+                          title={
+                            isRestricted
+                              ? "Esta voz requiere un plan de ElevenLabs compatible."
+                              : requiresAuth
+                              ? "Conecta tu acceso para usar esta acción"
+                              : undefined
+                          }
                         >
                           {isAdding ? (
                             <>
                               <Loader2 size={14} className="animate-spin mr-1.5" /> Añadiendo voz...
                             </>
+                          ) : isRestricted ? (
+                            "PLAN REQUERIDO"
                           ) : isSelected ? (
                             <>
                               <Check size={14} className="mr-1.5" /> En uso
@@ -958,6 +1080,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           onConnect={onConnectProvider}
           onDisconnect={onDisconnectProvider}
           isAuthenticated={isAuthenticated}
+          providerTier={providerTier}
         />
       )}
 
@@ -1053,7 +1176,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
           {isFormatAdvancedOpen && (
             <div className="advanced-options-panel">
-              <span className="advanced-sublabel">Formatos certificados por Gateway:</span>
+              <span className="advanced-sublabel">Formatos certificados:</span>
               <div className="advanced-list">
                 {[
                   {
@@ -1102,6 +1225,16 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
         <div className="action-bar-left" />
 
         <div className="action-bar-right">
+          {/* Warning if selected voice requires another plan (UX 02 Section 15 & 16) */}
+          {isSelectedVoiceRestricted && (
+            <div className="selected-voice-plan-warning" data-testid="selected-voice-plan-warning">
+              <AlertCircle size={15} className="mr-1.5 flex-shrink-0 text-amber" />
+              <span>
+                Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.
+              </span>
+            </div>
+          )}
+
           {isGenerating ? (
             <button
               type="button"
@@ -1114,11 +1247,23 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           ) : (
             <button
               type="button"
-              className={`btn-generate-main ${!isAuthenticated || !isProviderConnected ? "btn-auth-locked" : ""}`}
+              className={`btn-generate-main ${
+                !isAuthenticated || !isProviderConnected || isSelectedVoiceRestricted
+                  ? "btn-auth-locked"
+                  : ""
+              }`}
               onClick={onGenerateAll}
-              disabled={totalCount === 0 || readyCount === totalCount || !isAuthenticated || !isProviderConnected}
+              disabled={
+                totalCount === 0 ||
+                readyCount === totalCount ||
+                !isAuthenticated ||
+                !isProviderConnected ||
+                isSelectedVoiceRestricted
+              }
               title={
-                !isAuthenticated
+                isSelectedVoiceRestricted
+                  ? "Esta voz requiere un plan de ElevenLabs compatible."
+                  : !isAuthenticated
                   ? "Conecta tu acceso para usar esta acción"
                   : !isProviderConnected
                   ? "Conecta ElevenLabs para generar narraciones."
@@ -1127,7 +1272,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
             >
               <Volume2 size={18} className="mr-2" />
               <span>
-                {!isAuthenticated
+                {isSelectedVoiceRestricted
+                  ? "PLAN REQUERIDO · VOZ INCOMPATIBLE"
+                  : !isAuthenticated
                   ? "Conecta tu acceso para usar esta acción"
                   : !isProviderConnected
                   ? "Conecta ElevenLabs para generar narraciones."
