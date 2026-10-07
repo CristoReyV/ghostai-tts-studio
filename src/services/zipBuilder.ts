@@ -116,15 +116,39 @@ export async function buildGhostAiTtsPackage(options: BuildZipOptions): Promise<
 }
 
 /**
- * Triggers a browser download of a given Blob.
+ * Downloads a Blob directly via an anchor click.
+ * Strictly adheres to safe download standards:
+ * - Uses URL.createObjectURL(blob)
+ * - Temporary <a> element with download attribute
+ * - No hidden iframe
+ * - No Base64 conversion
+ * - Safely logs user activation state for local diagnostics
+ * - Cleans up DOM and revokes URL after download
  */
-export function triggerBlobDownload(blob: Blob, fileName: string): void {
+export function downloadBlob(blob: Blob, fileName: string): void {
+  if (typeof navigator !== "undefined" && "userActivation" in navigator) {
+    const ua = (navigator as unknown as { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
+    console.debug("[GhostAI Download] User activation:", {
+      isActive: ua?.isActive,
+      hasBeenActive: ua?.hasBeenActive,
+    });
+  }
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = fileName;
+  a.style.display = "none";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 15000);
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 15000);
 }
+
+/**
+ * Backward-compatible alias for downloadBlob.
+ */
+export const triggerBlobDownload = downloadBlob;
+

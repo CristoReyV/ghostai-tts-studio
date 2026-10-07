@@ -5,7 +5,7 @@
  * and GhostAI package ZIP exporting.
  */
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type {
   GatewayHealth,
   GatewayModel,
@@ -26,7 +26,16 @@ import {
   verifyGatewayAuthToken,
   setOnAuthExpired,
 } from "./services/gateway";
-import { buildGhostAiTtsPackage, triggerBlobDownload } from "./services/zipBuilder";
+import { buildGhostAiTtsPackage, downloadBlob } from "./services/zipBuilder";
+import {
+  isEmbeddedFrame,
+  isDownloadReceiverMode,
+  generateBridgeId,
+  GHOSTAI_MESSAGE_TYPES,
+  type GhostAiZipTransferPayload,
+} from "./utils/environment";
+import { saveActiveSession, loadActiveSession, clearActiveSession } from "./services/projectStorage";
+import { DownloadReceiver } from "./components/DownloadReceiver";
 import {
   type OfficialCategory,
   type VoiceAvailabilityMap,
@@ -42,6 +51,13 @@ import { NarrationTable } from "./components/NarrationTable";
 import { AlertCircle, CheckCircle, Info } from "lucide-react";
 
 export const App: React.FC = () => {
+  const isReceiverMode = useMemo(() => isDownloadReceiverMode(), []);
+  if (isReceiverMode) {
+    return <DownloadReceiver />;
+  }
+
+  const isEmbedded = useMemo(() => isEmbeddedFrame(), []);
+
   // Operator authentication state (session-only)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getGatewayAuthToken()));
   const [clientName, setClientName] = useState<string | null>(null);
@@ -73,7 +89,7 @@ export const App: React.FC = () => {
   // Execution states
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [systemNotification, setSystemNotification] = useState<{
-    type: "success" | "error" | "info";
+    type: "success" | "error" | "info" | "warning";
     message: string;
   } | null>(null);
 
@@ -81,8 +97,14 @@ export const App: React.FC = () => {
   const itemsRef = useRef<StudioNarrationItem[]>([]);
   itemsRef.current = items;
 
+  // Cross-window transfer refs for embedded -> top-level bridge
+  const pendingTransferRef = useRef<GhostAiZipTransferPayload | null>(null);
+  const receiverWindowRef = useRef<WindowProxy | null>(null);
+  const activeBridgeIdRef = useRef<string | null>(null);
+  const isReceiverReadyRef = useRef<boolean>(false);
+
   const showNotification = useCallback(
-    (type: "success" | "error" | "info", message: string, durationMs = 4500) => {
+    (type: "success" | "error" | "info" | "warning", message: string, durationMs = 4500) => {
       setSystemNotification({ type, message });
       setTimeout(() => setSystemNotification(null), durationMs);
     },
@@ -165,6 +187,78 @@ export const App: React.FC = () => {
       setAuthErrorMessage("Tu acceso expiró o ya no es válido. Vuelve a conectarte.");
     });
     return () => setOnAuthExpired(null);
+  }, []);
+
+  // Secure postMessage bridge listener for top-level receiver window
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // 1. Validate window source: must originate from our opened receiver window
+      if (receiverWindowRef.current && event.source && event.source !== receiverWindowRef.current) {
+        return; // Ignore messages from foreign or unexpected windows
+      }
+
+      // 2. Validate bridge pairing ID (must match active operation)
+      if (activeBridgeIdRef.current && event.data?.bridgeId !== activeBridgeIdRef.current) {
+        return; // Ignore mismatched bridge IDs
+      }
+
+      // 3. Strict Origin Validation: accept same origin or opaque origin ("null") if source + bridgeId match
+      if (event.origin !== window.location.origin && event.origin !== "null") {
+        return; // Reject third-party origins
+      }
+
+      // 4. Respond to handshake from receiver window
+      if (event.data?.type === GHOSTAI_MESSAGE_TYPES.RECEIVER_READY) {
+        isReceiverReadyRef.current = true;
+        if (pendingTransferRef.current && receiverWindowRef.current) {
+          try {
+            receiverWindowRef.current.postMessage(
+              {
+                type: GHOSTAI_MESSAGE_TYPES.ZIP_TRANSFER,
+                bridgeId: activeBridgeIdRef.current,
+                payload: pendingTransferRef.current,
+              },
+              window.location.origin !== "null" ? window.location.origin : "*"
+            );
+          } catch (err) {
+            console.warn("[GhostAI Bridge] Error posting transfer to receiver:", err);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  // Restore active session from storage if entering top-level or reloading
+  useEffect(() => {
+    let mounted = true;
+    async function restoreSessionIfNeeded() {
+      try {
+        const session = await loadActiveSession();
+        if (mounted && session && session.items.length > 0) {
+          setCurrentProject({
+            format: "ghostai-tts",
+            version: "1.0",
+            project: session.project,
+            items: session.items,
+          });
+          setItems(session.items);
+          const readyCount = session.items.filter((i) => i.status === "READY").length;
+          showNotification(
+            "info",
+            `Sesión activa restaurada: '${session.project.name}' (${readyCount} narraciones listas).`
+          );
+        }
+      } catch (err) {
+        console.warn("[GhostAI Session] Error restoring session:", err);
+      }
+    }
+    restoreSessionIfNeeded();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // CTA navigation helpers for ConnectionAlert
@@ -276,6 +370,7 @@ export const App: React.FC = () => {
     cleanupAudioUrls(items);
     setCurrentProject(null);
     setItems([]);
+    clearActiveSession();
   };
 
   // 3. Unified Global Voice & Settings Selection (Usar voz)
@@ -568,6 +663,82 @@ export const App: React.FC = () => {
     }
   };
 
+  // Safe fallback to open Studio in top-level receiver tab for downloading without sandbox restrictions
+  const handleOpenTopLevel = async () => {
+    if (!currentProject) return;
+
+    const readyItems = items.filter((it) => it.status === "READY" && it.audioBlob);
+    if (readyItems.length === 0) {
+      showNotification("error", "No hay audios listos para exportar.");
+      return;
+    }
+
+    // 1. Generate ephemeral bridge pairing ID synchronously
+    const bridgeId = generateBridgeId();
+    activeBridgeIdRef.current = bridgeId;
+    isReceiverReadyRef.current = false;
+
+    // 2. Open receiver window SYNCHRONOUSLY before any async operations to preserve user activation
+    const receiverUrl = `${window.location.origin}${window.location.pathname}?mode=receiver&bridge=${bridgeId}`;
+    let popup: WindowProxy | null = null;
+    try {
+      popup = window.open(receiverUrl, "_blank");
+    } catch (_err) {
+      popup = null;
+    }
+
+    if (!popup) {
+      showNotification(
+        "error",
+        "El navegador bloqueó la nueva pestaña. Permite abrirla o abre GhostAI TTS Studio directamente."
+      );
+      return;
+    }
+
+    receiverWindowRef.current = popup;
+    showNotification("info", "Preparando paquete ZIP para la pestaña receptora...");
+
+    // 3. Now build package in memory asynchronously
+    try {
+      const result = await buildGhostAiTtsPackage({
+        project: currentProject.project,
+        items,
+        includeOnlyReady: true,
+      });
+
+      const transferPayload: GhostAiZipTransferPayload = {
+        blob: result.blob,
+        fileName: result.fileName,
+        itemCount: result.itemCount,
+        projectName: currentProject.project.name,
+        bridgeId,
+      };
+
+      pendingTransferRef.current = transferPayload;
+
+      // If receiver already sent handshake, transfer immediately!
+      if (isReceiverReadyRef.current && receiverWindowRef.current) {
+        try {
+          receiverWindowRef.current.postMessage(
+            {
+              type: GHOSTAI_MESSAGE_TYPES.ZIP_TRANSFER,
+              bridgeId,
+              payload: transferPayload,
+            },
+            window.location.origin !== "null" ? window.location.origin : "*"
+          );
+        } catch (postErr) {
+          console.warn("[GhostAI Bridge] Error transferring zip package:", postErr);
+        }
+      }
+
+      // Persist to IndexedDB as secondary backup
+      saveActiveSession(currentProject.project, items).catch(() => {});
+    } catch (err) {
+      showNotification("error", `Error al preparar archivo ZIP: ${(err as Error).message}`);
+    }
+  };
+
   // 10. Export .ghostai-tts-package.zip
   const handleExportZip = async () => {
     if (!currentProject) return;
@@ -578,6 +749,17 @@ export const App: React.FC = () => {
       return;
     }
 
+    // In embedded/sandboxed environments, direct downloads are blocked by Chrome sandbox policy.
+    // We do NOT attempt the prohibited download and instead launch the safe postMessage receiver bridge.
+    if (isEmbeddedFrame()) {
+      showNotification(
+        "warning",
+        "Entorno embebido (sandbox) detectado: el navegador bloquea descargas directas en este marco. Abriendo receptor seguro en pestaña nueva..."
+      );
+      handleOpenTopLevel();
+      return;
+    }
+
     try {
       const result = await buildGhostAiTtsPackage({
         project: currentProject.project,
@@ -585,7 +767,7 @@ export const App: React.FC = () => {
         includeOnlyReady: true,
       });
 
-      triggerBlobDownload(result.blob, result.fileName);
+      downloadBlob(result.blob, result.fileName);
       showNotification(
         "success",
         `Paquete '${result.fileName}' exportado correctamente (${result.itemCount} audios).`
@@ -606,6 +788,7 @@ export const App: React.FC = () => {
           {systemNotification.type === "success" && <CheckCircle size={16} className="mr-2 text-emerald" />}
           {systemNotification.type === "error" && <AlertCircle size={16} className="mr-2 text-rose" />}
           {systemNotification.type === "info" && <Info size={16} className="mr-2 text-blue" />}
+          {systemNotification.type === "warning" && <AlertCircle size={16} className="mr-2 text-amber" />}
           <span>{systemNotification.message}</span>
         </div>
       )}
@@ -700,6 +883,8 @@ export const App: React.FC = () => {
                 isProviderConnected={isProviderConnected}
                 onConnectProvider={handleConnectProvider}
                 onDisconnectProvider={handleDisconnectProvider}
+                isEmbedded={isEmbedded}
+                onOpenTopLevel={handleOpenTopLevel}
               />
             </section>
 
