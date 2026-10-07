@@ -84,10 +84,10 @@ export const OperatorAccess: React.FC<OperatorAccessProps> = ({
           type="button"
           className="btn-operator-disconnect"
           onClick={handleDisconnect}
-          title="Desconectar clave de acceso del operador (elimina de sesión)"
+          title="Cerrar sesión de GhostAI (vuelve a pantalla de acceso)"
         >
           <LogOut size={12} className="mr-1" />
-          <span>DESCONECTAR</span>
+          <span>CERRAR SESIÓN</span>
         </button>
       </div>
     );

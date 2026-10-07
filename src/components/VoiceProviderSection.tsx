@@ -126,7 +126,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
       ) : (
         <div className="provider-disconnected-body">
           <p className="provider-explain-text">
-            Conecta tu API key de ElevenLabs. Las generaciones utilizarán los créditos de tu propia cuenta.
+            Conecta tu cuenta de ElevenLabs para generar narraciones. Tus generaciones usarán tus propios créditos.
           </p>
 
           <form className="provider-connect-form" onSubmit={handleSubmit}>

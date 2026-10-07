@@ -53,7 +53,8 @@ import { ProjectImporter } from "./components/ProjectImporter";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { BatchControls } from "./components/BatchControls";
 import { NarrationTable } from "./components/NarrationTable";
-import { AlertCircle, CheckCircle, Info } from "lucide-react";
+import { AuthGate } from "./components/AuthGate";
+import { AlertCircle, CheckCircle2, Info, Loader2, Layers } from "lucide-react";
 
 export const App: React.FC = () => {
   const isReceiverMode = useMemo(() => isDownloadReceiverMode(), []);
@@ -81,6 +82,7 @@ export const App: React.FC = () => {
 
   // Operator authentication state (session-only)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getGatewayAuthToken()));
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(() => Boolean(getGatewayAuthToken()));
   const [clientName, setClientName] = useState<string | null>(null);
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
 
@@ -111,8 +113,12 @@ export const App: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [systemNotification, setSystemNotification] = useState<{
     type: "success" | "error" | "info" | "warning";
+    title?: string;
     message: string;
+    fileName?: string;
+    meta?: string;
   } | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Control Plane 01: Download State Machine & Recovery tracking
   const [zipStatus, setZipStatus] = useState<ZipDownloadStatus>("not_prepared");
@@ -129,12 +135,36 @@ export const App: React.FC = () => {
   const activeBridgeIdRef = useRef<string | null>(null);
   const isReceiverReadyRef = useRef<boolean>(false);
 
+  const showToast = useCallback((toast: {
+    type: "success" | "error" | "info" | "warning";
+    title?: string;
+    message: string;
+    fileName?: string;
+    meta?: string;
+  }, durationMs = 5000) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setSystemNotification(toast);
+    toastTimeoutRef.current = setTimeout(() => {
+      setSystemNotification(null);
+      toastTimeoutRef.current = null;
+    }, durationMs);
+  }, []);
+
+  const closeToast = useCallback(() => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    setSystemNotification(null);
+  }, []);
+
   const showNotification = useCallback(
-    (type: "success" | "error" | "info" | "warning", message: string, durationMs = 4500) => {
-      setSystemNotification({ type, message });
-      setTimeout(() => setSystemNotification(null), durationMs);
+    (type: "success" | "error" | "info" | "warning", message: string, durationMs = 5000) => {
+      showToast({ type, message }, durationMs);
     },
-    []
+    [showToast]
   );
 
   // 1. Initialise Gateway Connection and fetch available voices & models
@@ -189,8 +219,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     const token = getGatewayAuthToken();
     if (token) {
+      setIsCheckingAuth(true);
       verifyGatewayAuthToken(token).then((res) => {
         if (res.ok) {
+          setIsAuthenticated(true);
           setClientName(res.clientName || null);
           setAuthErrorMessage(null);
         } else {
@@ -198,9 +230,20 @@ export const App: React.FC = () => {
           setIsAuthenticated(false);
           setClientName(null);
           setIsProviderConnected(false);
-          setAuthErrorMessage("Tu acceso expiró o ya no es válido. Vuelve a conectarte.");
+          setAuthErrorMessage("Tu sesión de GhostAI terminó. Ingresa nuevamente.");
         }
+        setIsCheckingAuth(false);
+      }).catch(() => {
+        clearGatewayAuthToken();
+        setIsAuthenticated(false);
+        setClientName(null);
+        setIsProviderConnected(false);
+        setAuthErrorMessage("Tu sesión de GhostAI terminó. Ingresa nuevamente.");
+        setIsCheckingAuth(false);
       });
+    } else {
+      setIsAuthenticated(false);
+      setIsCheckingAuth(false);
     }
   }, []);
 
@@ -210,7 +253,7 @@ export const App: React.FC = () => {
       setIsAuthenticated(false);
       setClientName(null);
       setIsProviderConnected(false);
-      setAuthErrorMessage("Tu acceso expiró o ya no es válido. Vuelve a conectarte.");
+      setAuthErrorMessage("Tu sesión de GhostAI terminó. Ingresa nuevamente.");
     });
     return () => setOnAuthExpired(null);
   }, []);
@@ -822,10 +865,13 @@ export const App: React.FC = () => {
       setZipStatus("download_triggered");
       setTimeout(() => setZipStatus("verification_pending"), 50);
 
-      showNotification(
-        "success",
-        `Paquete '${result.fileName}' exportado correctamente (${result.itemCount} audios).`
-      );
+      showToast({
+        type: "success",
+        title: "ZIP exportado correctamente",
+        message: result.fileName,
+        fileName: result.fileName,
+        meta: `${result.itemCount} audio${result.itemCount === 1 ? "" : "s"} · Listo para verificar`,
+      }, 5000);
     } catch (err) {
       setZipStatus("failed");
       showNotification("error", `Error al crear archivo ZIP: ${(err as Error).message}`);
@@ -835,16 +881,84 @@ export const App: React.FC = () => {
   const hasErrors = items.some((it) => it.status === "ERROR");
   const readyItemsCount = items.filter((it) => it.status === "READY").length;
 
+  if (isCheckingAuth) {
+    return (
+      <div className="auth-gate-splash" data-testid="auth-splash">
+        <div className="auth-gate-splash-inner">
+          <div className="auth-gate-logo-badge animate-pulse">
+            <Layers size={32} className="auth-gate-logo-icon" />
+          </div>
+          <h2 className="brand-title" style={{ marginTop: "1rem", fontSize: "1.2rem" }}>GHOSTAI TTS STUDIO</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#94a3b8", fontSize: "0.85rem", marginTop: "0.5rem" }}>
+            <Loader2 size={16} className="spin text-cyan-400" />
+            <span>Verificando sesión GhostAI...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <AuthGate
+        onLoginSuccess={(newClientName) => {
+          setIsAuthenticated(true);
+          setClientName(newClientName);
+          setAuthErrorMessage(null);
+          checkElevenLabsStatus().then((s) => setIsProviderConnected(Boolean(s.connected))).catch(() => {});
+        }}
+        initialError={authErrorMessage}
+      />
+    );
+  }
+
   return (
     <div className="app-layout">
-      {/* Notifications Toast */}
+      {/* Compact Toast Notification */}
       {systemNotification && (
-        <div className={`toast-notification toast-${systemNotification.type}`}>
-          {systemNotification.type === "success" && <CheckCircle size={16} className="mr-2 text-emerald" />}
-          {systemNotification.type === "error" && <AlertCircle size={16} className="mr-2 text-rose" />}
-          {systemNotification.type === "info" && <Info size={16} className="mr-2 text-blue" />}
-          {systemNotification.type === "warning" && <AlertCircle size={16} className="mr-2 text-amber" />}
-          <span>{systemNotification.message}</span>
+        <div
+          className={`compact-toast compact-toast-${systemNotification.type}`}
+          role="status"
+          aria-live="polite"
+          data-testid="compact-toast"
+        >
+          <div className="compact-toast-header">
+            <div className="compact-toast-title-row">
+              {systemNotification.type === "success" && (
+                <CheckCircle2 size={16} className="compact-toast-icon text-emerald" />
+              )}
+              {systemNotification.type === "error" && (
+                <AlertCircle size={16} className="compact-toast-icon text-rose" />
+              )}
+              {systemNotification.type === "info" && (
+                <Info size={16} className="compact-toast-icon text-blue" />
+              )}
+              {systemNotification.type === "warning" && (
+                <AlertCircle size={16} className="compact-toast-icon text-amber" />
+              )}
+              <span className="compact-toast-title">
+                {systemNotification.title || (systemNotification.type === "success" ? "Operación exitosa" : "Notificación")}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="compact-toast-close"
+              onClick={closeToast}
+              aria-label="Cerrar notificación"
+            >
+              ×
+            </button>
+          </div>
+
+          {systemNotification.fileName && (
+            <div className="compact-toast-filename" title={systemNotification.fileName}>
+              {systemNotification.fileName}
+            </div>
+          )}
+
+          <div className="compact-toast-meta">
+            {systemNotification.meta || systemNotification.message}
+          </div>
         </div>
       )}
 
