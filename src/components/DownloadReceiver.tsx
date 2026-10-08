@@ -110,6 +110,23 @@ export const DownloadReceiver: React.FC = () => {
         });
         // Transition directly to ZIP LISTO state
         setStatus("READY");
+
+        // Send PAYLOAD_RECEIVED acknowledgement back to window.opener (Section 12)
+        if (window.opener && window.opener !== window) {
+          try {
+            window.opener.postMessage(
+              {
+                type: GHOSTAI_MESSAGE_TYPES.PAYLOAD_RECEIVED,
+                bridgeId: expectedBridgeId,
+                fileName: safeName,
+                itemCount: payload.itemCount,
+              },
+              expectedOrigin !== "null" ? expectedOrigin : "*"
+            );
+          } catch (_err) {
+            // Opener may be in an opaque sandbox
+          }
+        }
       }
     };
 
@@ -189,6 +206,19 @@ export const DownloadReceiver: React.FC = () => {
     if (!zipData) return;
     downloadBlob(zipData.blob, zipData.fileName);
     setStatus("DOWNLOADED");
+
+    if (window.opener && window.opener !== window) {
+      try {
+        window.opener.postMessage(
+          {
+            type: GHOSTAI_MESSAGE_TYPES.DOWNLOAD_TRIGGERED,
+            bridgeId: expectedBridgeId,
+            fileName: zipData.fileName,
+          },
+          window.location.origin !== "null" ? window.location.origin : "*"
+        );
+      } catch (_err) {}
+    }
   };
 
   const handleOpenOfficialStudio = () => {

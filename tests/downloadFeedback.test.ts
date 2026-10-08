@@ -4,7 +4,7 @@
  *
  * Verifies:
  *  - Compact Toast renders correctly with structured ZIP export content:
- *    - Title: "✓ ZIP exportado correctamente"
+ *    - Title: "ZIP listo para descargar"
  *    - Filename tag
  *    - Meta info: "1 audio · Listo para verificar"
  *    - Manual close button: "×"
@@ -23,7 +23,7 @@ describe("GhostAI TTS Studio: Compact Download Feedback UX 01", () => {
     // Replicating compact toast markup from App.tsx
     const toastData = {
       type: "success" as const,
-      title: "ZIP exportado correctamente",
+      title: "ZIP listo para descargar",
       message: "lia_y_el_faro_encantado-tts-package.zip",
       fileName: "lia_y_el_faro_encantado-tts-package.zip",
       meta: "1 audio · Listo para verificar",
@@ -53,7 +53,7 @@ describe("GhostAI TTS Studio: Compact Download Feedback UX 01", () => {
       )
     );
 
-    expect(html).toContain("ZIP exportado correctamente");
+    expect(html).toContain("ZIP listo para descargar");
     expect(html).toContain("lia_y_el_faro_encantado-tts-package.zip");
     expect(html).toContain("1 audio · Listo para verificar");
     expect(html).toContain("compact-toast-close");

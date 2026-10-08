@@ -28,7 +28,6 @@ import {
   AlertCircle,
   BookmarkCheck,
   Tag,
-  ExternalLink,
 } from "lucide-react";
 import type {
   GatewayModel,
@@ -118,8 +117,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   providerTier,
   onConnectProvider,
   onDisconnectProvider,
-  isEmbedded = false,
-  onOpenTopLevel,
 }) => {
   // Global Audio Preview Singleton Player
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1297,26 +1294,16 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
           {hasReadyItems && (
             <div className="zip-download-actions flex items-center gap-2">
-              {isEmbedded && onOpenTopLevel && (
-                <button
-                  type="button"
-                  className="btn-export-zip-main btn-open-top-level"
-                  onClick={onOpenTopLevel}
-                  title="Abrir Studio en pestaña nueva para descargar el ZIP sin restricciones de sandbox"
-                >
-                  <ExternalLink size={18} className="mr-2 text-amber" />
-                  <span>Abrir en Pestaña Nueva para Descargar ({readyCount})</span>
-                </button>
-              )}
               <button
                 type="button"
-                className={isEmbedded ? "btn-export-zip-subtle" : "btn-export-zip-main"}
+                className="btn-export-zip-main"
                 onClick={onExportZip}
                 disabled={isGenerating}
-                title={isEmbedded ? "Intentar descarga directa en contenedor actual" : "Descargar paquete ZIP"}
+                data-testid="btn-export-zip"
+                title="Descargar paquete ZIP en ventana segura sin restricciones de sandbox"
               >
                 <PackageCheck size={18} className="mr-2 text-emerald" />
-                <span>{isEmbedded ? `Descargar Directo (${readyCount})` : `Descargar ZIP (${readyCount})`}</span>
+                <span>Descargar ZIP ({readyCount})</span>
               </button>
             </div>
           )}

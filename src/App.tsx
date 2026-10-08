@@ -27,7 +27,7 @@ import {
   verifyGatewayAuthToken,
   setOnAuthExpired,
 } from "./services/gateway";
-import { buildGhostAiTtsPackage, downloadBlob } from "./services/zipBuilder";
+import { buildGhostAiTtsPackage } from "./services/zipBuilder";
 import {
   isEmbeddedFrame,
   isDownloadReceiverMode,
@@ -295,6 +295,37 @@ export const App: React.FC = () => {
             console.warn("[GhostAI Bridge] Error posting transfer to receiver:", err);
           }
         }
+      }
+
+      // 5. Handle PAYLOAD_RECEIVED from receiver window (Section 11 & 12)
+      if (event.data?.type === GHOSTAI_MESSAGE_TYPES.PAYLOAD_RECEIVED) {
+        setZipStatus("prepared");
+        showToast(
+          {
+            type: "info",
+            title: "ZIP listo para descargar",
+            message: event.data.fileName || "Paquete ZIP listo",
+            fileName: event.data.fileName,
+            meta: `${event.data.itemCount || readyItemsCount} audios · Continúa en la ventana de descarga`,
+          },
+          6000
+        );
+      }
+
+      // 6. Handle DOWNLOAD_TRIGGERED from receiver window (Section 13)
+      if (event.data?.type === GHOSTAI_MESSAGE_TYPES.DOWNLOAD_TRIGGERED) {
+        setZipStatus("download_triggered");
+        setTimeout(() => setZipStatus("verification_pending"), 50);
+        showToast(
+          {
+            type: "success",
+            title: "Descarga iniciada",
+            message: event.data.fileName,
+            fileName: event.data.fileName,
+            meta: "Listo para verificar",
+          },
+          5000
+        );
       }
     };
 
@@ -777,8 +808,9 @@ export const App: React.FC = () => {
     }
   };
 
-  // Safe fallback to open Studio in top-level receiver tab for downloading without sandbox restrictions
-  const handleOpenTopLevel = async () => {
+  // 10. Export .ghostai-tts-package.zip via secure receiver window (ONE DOWNLOAD ENGINE)
+  // Hardened Fix 01E: Receiver is the ONLY physical download path for both embedded and top-level contexts.
+  const handleExportZip = () => {
     if (!currentProject) return;
 
     const readyItems = items.filter((it) => it.status === "READY" && it.audioBlob);
@@ -787,12 +819,12 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 1. Generate ephemeral bridge pairing ID synchronously
+    // Step 1: SYNCHRONOUS window.open BEFORE ANY AWAIT (Section 4)
+    // Preserves native browser user-activation context to prevent popup blockers
     const bridgeId = generateBridgeId();
     activeBridgeIdRef.current = bridgeId;
     isReceiverReadyRef.current = false;
 
-    // 2. Open receiver window SYNCHRONOUSLY before any async operations to preserve user activation
     const receiverUrl = `${window.location.origin}${window.location.pathname}?mode=receiver&bridge=${bridgeId}`;
     let popup: WindowProxy | null = null;
     try {
@@ -804,102 +836,58 @@ export const App: React.FC = () => {
     if (!popup) {
       showNotification(
         "error",
-        "El navegador bloqueó la nueva pestaña. Permite abrirla o abre GhostAI TTS Studio directamente."
+        "El navegador bloqueó la ventana de descarga. Por favor permite ventanas emergentes (popups) para este sitio."
       );
       return;
     }
 
     receiverWindowRef.current = popup;
-    showNotification("info", "Preparando paquete ZIP para la pestaña receptora...");
+    setZipStatus("prepared");
+    showNotification("info", "Preparando paquete ZIP para la ventana de descarga...");
 
-    // 3. Now build package in memory asynchronously
-    try {
-      const result = await buildGhostAiTtsPackage({
-        project: currentProject.project,
-        items,
-        includeOnlyReady: true,
-      });
+    // Step 2: Build package asynchronously in memory
+    buildGhostAiTtsPackage({
+      project: currentProject.project,
+      items,
+      includeOnlyReady: true,
+    })
+      .then((result) => {
+        const transferPayload: GhostAiZipTransferPayload = {
+          blob: result.blob,
+          fileName: result.fileName,
+          itemCount: result.itemCount,
+          projectName: currentProject.project.name,
+          bridgeId,
+        };
 
-      const transferPayload: GhostAiZipTransferPayload = {
-        blob: result.blob,
-        fileName: result.fileName,
-        itemCount: result.itemCount,
-        projectName: currentProject.project.name,
-        bridgeId,
-      };
+        pendingTransferRef.current = transferPayload;
 
-      pendingTransferRef.current = transferPayload;
-
-      // If receiver already sent handshake, transfer immediately!
-      if (isReceiverReadyRef.current && receiverWindowRef.current) {
-        try {
-          receiverWindowRef.current.postMessage(
-            {
-              type: GHOSTAI_MESSAGE_TYPES.ZIP_TRANSFER,
-              bridgeId,
-              payload: transferPayload,
-            },
-            window.location.origin !== "null" ? window.location.origin : "*"
-          );
-        } catch (postErr) {
-          console.warn("[GhostAI Bridge] Error transferring zip package:", postErr);
+        // If receiver already announced RECEIVER_READY, transfer immediately
+        if (isReceiverReadyRef.current && receiverWindowRef.current) {
+          try {
+            receiverWindowRef.current.postMessage(
+              {
+                type: GHOSTAI_MESSAGE_TYPES.ZIP_TRANSFER,
+                bridgeId,
+                payload: transferPayload,
+              },
+              window.location.origin !== "null" ? window.location.origin : "*"
+            );
+          } catch (postErr) {
+            console.warn("[GhostAI Bridge] Error transferring zip package:", postErr);
+          }
         }
-      }
 
-      // Persist to IndexedDB as secondary backup
-      saveActiveSession(currentProject.project, items).catch(() => {});
-    } catch (err) {
-      showNotification("error", `Error al preparar archivo ZIP: ${(err as Error).message}`);
-    }
-  };
-
-  // 10. Export .ghostai-tts-package.zip
-  const handleExportZip = async () => {
-    if (!currentProject) return;
-
-    const readyItems = items.filter((it) => it.status === "READY" && it.audioBlob);
-    if (readyItems.length === 0) {
-      showNotification("error", "No hay audios listos para exportar.");
-      return;
-    }
-
-    // In embedded/sandboxed environments, direct downloads are blocked by Chrome sandbox policy.
-    // We do NOT attempt the prohibited download and instead launch the safe postMessage receiver bridge.
-    if (isEmbeddedFrame()) {
-      showNotification(
-        "warning",
-        "Entorno embebido (sandbox) detectado: el navegador bloquea descargas directas en este marco. Abriendo receptor seguro en pestaña nueva..."
-      );
-      setZipStatus("download_triggered");
-      setTimeout(() => setZipStatus("verification_pending"), 50);
-      handleOpenTopLevel();
-      return;
-    }
-
-    try {
-      const result = await buildGhostAiTtsPackage({
-        project: currentProject.project,
-        items,
-        includeOnlyReady: true,
+        // Persist to IndexedDB as secondary backup
+        saveActiveSession(currentProject.project, items).catch(() => {});
+      })
+      .catch((err) => {
+        setZipStatus("failed");
+        showNotification("error", `Error al crear archivo ZIP: ${(err as Error).message}`);
       });
-
-      setZipStatus("prepared");
-      downloadBlob(result.blob, result.fileName);
-      setZipStatus("download_triggered");
-      setTimeout(() => setZipStatus("verification_pending"), 50);
-
-      showToast({
-        type: "success",
-        title: "ZIP exportado correctamente",
-        message: result.fileName,
-        fileName: result.fileName,
-        meta: `${result.itemCount} audio${result.itemCount === 1 ? "" : "s"} · Listo para verificar`,
-      }, 5000);
-    } catch (err) {
-      setZipStatus("failed");
-      showNotification("error", `Error al crear archivo ZIP: ${(err as Error).message}`);
-    }
   };
+
+  const handleOpenTopLevel = handleExportZip;
 
   const hasErrors = items.some((it) => it.status === "ERROR");
   const readyItemsCount = items.filter((it) => it.status === "READY").length;

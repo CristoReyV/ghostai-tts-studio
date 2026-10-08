@@ -68,7 +68,7 @@ export function isDownloadReceiverMode(): boolean {
     return false;
   }
   try {
-    return window.location.search.includes("mode=receiver");
+    return window.location.search.includes("mode=receiver") || window.location.search.includes("mode=download-receiver");
   } catch {
     return false;
   }
@@ -155,6 +155,8 @@ export function sanitizeFileName(fileName: string): string {
 export const GHOSTAI_MESSAGE_TYPES = {
   RECEIVER_READY: "GHOSTAI_RECEIVER_READY",
   ZIP_TRANSFER: "GHOSTAI_ZIP_TRANSFER",
+  PAYLOAD_RECEIVED: "GHOSTAI_PAYLOAD_RECEIVED",
+  DOWNLOAD_TRIGGERED: "GHOSTAI_DOWNLOAD_TRIGGERED",
 } as const;
 
 export interface GhostAiZipTransferPayload {
