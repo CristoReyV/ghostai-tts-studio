@@ -440,11 +440,15 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
         name: voice.name,
       });
 
-      // Construct clean GatewayVoice and notify parent
+      // Construct clean GatewayVoice and notify parent with preserved provenance (UX 03.1 Section 3 & 17)
       const newGatewayVoice: GatewayVoice = {
         voiceId: voice.voiceId,
         name: voice.name,
         category: voice.category || "shared",
+        voiceOrigin: "library_copy",
+        publicOwnerId: voice.publicOwnerId,
+        libraryAllowsFreeUsers: voice.libraryAllowsFreeUsers ?? voice.freeUsersAllowed,
+        availableForTiers: voice.availableForTiers,
         labels: {
           language: voice.language || selectedLanguage,
           accent: voice.accent || "",

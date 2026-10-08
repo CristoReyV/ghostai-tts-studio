@@ -7,7 +7,7 @@
  * ZERO hardcoded voice IDs as universal recommendations.
  */
 
-import type { GatewayVoice } from "../types/tts";
+import type { GatewayVoice, VoiceOrigin } from "../types/tts";
 
 export type OfficialCategory =
   | "conversational"
@@ -767,36 +767,66 @@ export interface VoicePlanAvailabilityResult {
 }
 
 /**
+ * Helper to determine voice origin provenance from metadata (UX 03.1 Section 3).
+ * Preferred evidence:
+ * - voiceOrigin field if present
+ * - publicOwnerId / category in ["professional", "shared", "high_quality"] -> shared_library
+ * - category === "premade" -> premade
+ * - isOwner === true or category in ["cloned", "generated"] -> owned
+ * - otherwise -> unknown
+ */
+export function determineVoiceOrigin(voice: {
+  voiceOrigin?: VoiceOrigin;
+  category?: string | null;
+  publicOwnerId?: string | null;
+  isOwner?: boolean | null;
+}): VoiceOrigin {
+  if (voice.voiceOrigin) return voice.voiceOrigin;
+  if (
+    voice.publicOwnerId ||
+    voice.category === "professional" ||
+    voice.category === "shared" ||
+    voice.category === "high_quality"
+  ) {
+    return "shared_library";
+  }
+  if (voice.category === "premade") {
+    return "premade";
+  }
+  if (voice.isOwner === true) {
+    return "owned";
+  }
+  if (voice.category === "cloned" || voice.category === "generated") {
+    return "owned";
+  }
+  return "unknown";
+}
+
+/**
  * Evaluates whether a voice is usable by the current ElevenLabs account based on
- * real provider subscription capabilities (tier) and voice metadata.
+ * provider subscription capabilities (tier) and voice provenance (UX 03.1).
  *
- * Rules:
- * 1. Account confirmed as Free ("free"):
- *    - Shared library voice with freeUsersAllowed === false:
- *      -> Restricted ("PLAN REQUERIDO"). Blocked for synthesis & adding.
- *    - Premade voice (category === "premade"):
- *      -> Available ("DISPONIBLE GRATIS").
- *    - Account custom voice (category === "cloned" | "generated"):
- *      -> Available ("DISPONIBLE GRATIS").
- *    - Shared library voice with freeUsersAllowed === true:
- *      -> Available ("DISPONIBLE GRATIS").
+ * OFFICIAL ELEVENLABS RULE:
+ * "Voice Library voices are not available via the API to free tier users."
+ * GhostAI TTS Studio synthesizes via the ElevenLabs API.
  *
- * 2. Account confirmed as Paid (tier != "free" and != "unknown"):
- *    - All library & account voices:
- *      -> Available ("DISPONIBLE CON TU PLAN").
- *
- * 3. Account Tier Unknown / Unconnected:
- *    - If freeUsersAllowed === false:
- *      -> Restricted ("PLAN REQUERIDO").
- *    - If category === "premade":
- *      -> Available ("DISPONIBLE").
- *    - Otherwise:
- *      -> Unknown ("DISPONIBILIDAD POR VERIFICAR").
+ * Therefore:
+ * FREE ACCOUNT + VOICE LIBRARY / SHARED VOICE = NOT API-SYNTHESIZABLE.
+ * Regardless of whether libraryAllowsFreeUsers (free_users_allowed) is true,
+ * the voice is bookmarked, or appears in "EN TU COLECCIÓN".
  */
 export function checkVoicePlanAvailability(
   voice: {
+    voiceId?: string;
+    name?: string;
     category?: string | null;
-    freeUsersAllowed?: boolean;
+    voiceOrigin?: VoiceOrigin;
+    libraryAllowsFreeUsers?: boolean | null;
+    freeUsersAllowed?: boolean | null;
+    publicOwnerId?: string | null;
+    isOwner?: boolean | null;
+    isBookmarked?: boolean | null;
+    availableForTiers?: string[] | null;
     labels?: Record<string, string>;
   },
   tier?: string | null
@@ -804,9 +834,22 @@ export function checkVoicePlanAvailability(
   const normTier = (tier || "").trim().toLowerCase();
   const isFree = normTier === "free";
   const isPaid = normTier.length > 0 && normTier !== "free" && normTier !== "unknown";
+  const origin = determineVoiceOrigin(voice);
 
-  // If tier is confirmed as Paid
+  // 1. Paid Account:
+  // Voice Library & custom voices are available via API unless explicitly tier-restricted
   if (isPaid) {
+    if (Array.isArray(voice.availableForTiers) && voice.availableForTiers.length > 0) {
+      const tierAllowed = voice.availableForTiers.some((t) => t.toLowerCase() === normTier);
+      if (!tierAllowed) {
+        return {
+          availability: "restricted",
+          badgeLabel: "PLAN REQUERIDO",
+          reason: `Esta voz requiere un plan de ElevenLabs superior (${voice.availableForTiers.join(", ")}).`,
+          isBlockedForSynthesis: true,
+        };
+      }
+    }
     return {
       availability: "available",
       badgeLabel: "DISPONIBLE CON TU PLAN",
@@ -814,58 +857,88 @@ export function checkVoicePlanAvailability(
     };
   }
 
-  // Premade voices are universally available to all tiers including Free
-  if (voice.category === "premade") {
+  // 2. Free Account:
+  if (isFree) {
+    // HARD RULE (UX 03.1 Section 4):
+    // Shared library voices and library copies are strictly blocked from API synthesis on Free tier
+    if (origin === "shared_library" || origin === "library_copy") {
+      return {
+        availability: "restricted",
+        badgeLabel: "PLAN REQUERIDO",
+        reason:
+          "Las voces de Voice Library no están disponibles mediante la API de ElevenLabs en el plan gratuito.",
+        isBlockedForSynthesis: true,
+      };
+    }
+
+    // Premade voices: Default built-in provider voices are universally API-synthesizable on Free
+    if (origin === "premade") {
+      if (Array.isArray(voice.availableForTiers) && voice.availableForTiers.length > 0) {
+        const freeAllowed = voice.availableForTiers.some((t) => t.toLowerCase() === "free");
+        if (!freeAllowed) {
+          return {
+            availability: "restricted",
+            badgeLabel: "PLAN REQUERIDO",
+            reason: "Esta voz no está disponible para cuentas gratuitas de ElevenLabs.",
+            isBlockedForSynthesis: true,
+          };
+        }
+      }
+      return {
+        availability: "available",
+        badgeLabel: "DISPONIBLE GRATIS",
+        isBlockedForSynthesis: false,
+      };
+    }
+
+    // Owned custom voices (cloned / generated): check explicit tier capability evidence (Section 8)
+    if (origin === "owned") {
+      if (Array.isArray(voice.availableForTiers) && voice.availableForTiers.includes("free")) {
+        return {
+          availability: "available",
+          badgeLabel: "DISPONIBLE GRATIS",
+          isBlockedForSynthesis: false,
+        };
+      }
+      // Fail closed: without positive evidence, classify as unknown rather than assuming available
+      return {
+        availability: "unknown",
+        badgeLabel: "POR VERIFICAR",
+        reason: "No pudimos confirmar la disponibilidad de esta voz propia con tu cuenta gratuita.",
+        isBlockedForSynthesis: false,
+      };
+    }
+
+    // Fail closed (Section 10): No positive evidence -> unknown
     return {
-      availability: "available",
-      badgeLabel: isFree ? "DISPONIBLE GRATIS" : "DISPONIBLE",
+      availability: "unknown",
+      badgeLabel: "POR VERIFICAR",
       isBlockedForSynthesis: false,
     };
   }
 
-  // Cloned or generated voices belonging to user's account
-  if (voice.category === "cloned" || voice.category === "generated") {
-    return {
-      availability: "available",
-      badgeLabel: isFree ? "DISPONIBLE GRATIS" : "DISPONIBLE",
-      isBlockedForSynthesis: false,
-    };
-  }
-
-  // If freeUsersAllowed is explicitly false (e.g. shared library voice on Free account)
-  if (voice.freeUsersAllowed === false) {
+  // 3. Unconnected / Unknown Account Tier:
+  if (voice.freeUsersAllowed === false || voice.libraryAllowsFreeUsers === false) {
     return {
       availability: "restricted",
       badgeLabel: "PLAN REQUERIDO",
-      reason:
-        "Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.",
+      reason: "Esta voz requiere un plan de ElevenLabs compatible.",
       isBlockedForSynthesis: true,
     };
   }
 
-  // If freeUsersAllowed is explicitly true
-  if (voice.freeUsersAllowed === true) {
+  if (origin === "premade") {
     return {
       availability: "available",
-      badgeLabel: isFree ? "DISPONIBLE GRATIS" : "DISPONIBLE",
+      badgeLabel: "DISPONIBLE",
       isBlockedForSynthesis: false,
     };
   }
 
-  // If freeUsersAllowed is not specified on a shared voice or account tier is unverified,
-  // classify as unknown rather than assuming available or restricted (UX 03 Section 1 & 13)
-  if (voice.freeUsersAllowed === undefined || !normTier || normTier === "unknown") {
-    return {
-      availability: "unknown",
-      badgeLabel: "DISPONIBILIDAD POR VERIFICAR",
-      isBlockedForSynthesis: false,
-    };
-  }
-
-  // Default fallback for Free tier when no restriction is detected
+  // Fail closed
   return {
-    availability: "available",
-    badgeLabel: "DISPONIBLE",
+    availability: "unknown",
+    badgeLabel: "POR VERIFICAR",
     isBlockedForSynthesis: false,
   };
 }
@@ -936,7 +1009,12 @@ export interface VoiceCatalogCounts {
 export function computeVoiceCatalogCounts(
   voices: Array<{
     category?: string | null;
-    freeUsersAllowed?: boolean;
+    voiceOrigin?: VoiceOrigin;
+    libraryAllowsFreeUsers?: boolean | null;
+    freeUsersAllowed?: boolean | null;
+    publicOwnerId?: string | null;
+    isOwner?: boolean | null;
+    availableForTiers?: string[] | null;
     labels?: Record<string, string>;
   }>,
   tier?: string | null
@@ -974,7 +1052,12 @@ export function filterAndSortVoiceCatalog<
   T extends {
     name: string;
     category?: string | null;
-    freeUsersAllowed?: boolean;
+    voiceOrigin?: VoiceOrigin;
+    libraryAllowsFreeUsers?: boolean | null;
+    freeUsersAllowed?: boolean | null;
+    publicOwnerId?: string | null;
+    isOwner?: boolean | null;
+    availableForTiers?: string[] | null;
     labels?: Record<string, string>;
     description?: string | null;
     useCase?: string | null;
@@ -1038,17 +1121,28 @@ export function filterAndSortVoiceCatalog<
 export function getVoicePlanHelperText(
   voice: {
     category?: string | null;
-    freeUsersAllowed?: boolean;
+    voiceOrigin?: VoiceOrigin;
+    publicOwnerId?: string | null;
+    libraryAllowsFreeUsers?: boolean | null;
+    freeUsersAllowed?: boolean | null;
     labels?: Record<string, string>;
   },
   tier?: string | null
 ): string {
+  const normTier = (tier || "").trim().toLowerCase();
+  const isFree = normTier === "free";
+  const origin = determineVoiceOrigin(voice);
+
+  if (isFree && (origin === "shared_library" || origin === "library_copy")) {
+    return "No disponible mediante la API de ElevenLabs en el plan gratuito.";
+  }
+
   const check = checkVoicePlanAvailability(voice, tier);
   if (check.availability === "available") {
     return "Disponible con tu cuenta actual.";
   }
   if (check.availability === "restricted") {
-    return "Esta voz requiere un plan compatible de ElevenLabs.";
+    return check.reason || "Esta voz requiere un plan compatible de ElevenLabs.";
   }
   return "No pudimos confirmar la disponibilidad con tu cuenta.";
 }
@@ -1059,7 +1153,10 @@ export function getVoicePlanHelperText(
 export function getVoicePlanBadgeLabel(
   voice: {
     category?: string | null;
-    freeUsersAllowed?: boolean;
+    voiceOrigin?: VoiceOrigin;
+    publicOwnerId?: string | null;
+    libraryAllowsFreeUsers?: boolean | null;
+    freeUsersAllowed?: boolean | null;
     labels?: Record<string, string>;
   },
   tier?: string | null

@@ -53,12 +53,19 @@ export interface StudioNarrationItem extends GhostAiTtsItem {
   responseBytes?: number;
 }
 
+export type VoiceOrigin = "premade" | "shared_library" | "owned" | "library_copy" | "unknown";
+
 export interface GatewayVoice {
   voiceId: string;
   name: string;
   category: string | null;
   labels: Record<string, string>;
   previewUrl: string | null;
+  availableForTiers?: string[] | null;
+  isOwner?: boolean | null;
+  voiceOrigin?: VoiceOrigin;
+  libraryAllowsFreeUsers?: boolean | null;
+  publicOwnerId?: string | null;
 }
 
 export interface GatewayModel {
@@ -118,7 +125,12 @@ export interface VoiceLibraryVoice {
   clonedByCount: number;
   usageCharacterCount1y: number;
   featured: boolean;
+  libraryAllowsFreeUsers?: boolean;
   freeUsersAllowed: boolean;
+  voiceOrigin?: VoiceOrigin;
+  isBookmarked?: boolean;
+  isAddedByUser?: boolean;
+  availableForTiers?: string[] | null;
   liveModerationEnabled: boolean;
   noticePeriod: number | null;
   rate: number | null;

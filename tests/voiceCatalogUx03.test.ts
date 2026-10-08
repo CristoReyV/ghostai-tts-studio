@@ -35,30 +35,34 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       voiceId: "voice-premade-1",
       name: "Bella - Premade Story",
       category: "premade",
-      freeUsersAllowed: true,
+      voiceOrigin: "premade" as const,
       description: "Warm expressive voice",
       useCase: "narration",
     },
     {
-      voiceId: "voice-cloned-2",
-      name: "Marcus - Cloned Voice",
-      category: "cloned",
-      freeUsersAllowed: false,
-      description: "Account custom voice",
+      voiceId: "voice-premade-2",
+      name: "Bella - Premade Casual",
+      category: "premade",
+      voiceOrigin: "premade" as const,
+      description: "Casual premade voice",
       useCase: "conversational",
     },
     {
       voiceId: "voice-shared-free-3",
       name: "Bella - Community Free",
       category: "shared",
+      voiceOrigin: "shared_library" as const,
+      libraryAllowsFreeUsers: true,
       freeUsersAllowed: true,
-      description: "Community voice open to all",
+      description: "Community voice open in library",
       useCase: "news",
     },
     {
       voiceId: "voice-shared-pro-4",
       name: "Bella - Community Pro Only",
       category: "shared",
+      voiceOrigin: "shared_library" as const,
+      libraryAllowsFreeUsers: false,
       freeUsersAllowed: false,
       description: "Restricted voice for paid subscribers",
       useCase: "narration",
@@ -67,6 +71,8 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       voiceId: "voice-shared-pro-5",
       name: "Arthur - Pro Documentary",
       category: "shared",
+      voiceOrigin: "shared_library" as const,
+      libraryAllowsFreeUsers: false,
       freeUsersAllowed: false,
       description: "Deep voice for documentaries",
       useCase: "documentary",
@@ -74,7 +80,8 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
     {
       voiceId: "voice-unverified-6",
       name: "Charlie - Ambiguous Tier",
-      category: "shared",
+      category: "custom",
+      voiceOrigin: "unknown" as const,
       description: "Unverified provider metadata",
       useCase: "general",
     },
@@ -84,12 +91,13 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
   describe("Dynamic Counts (Section 4)", () => {
     it("computes accurate counts for Free account without hardcoded numbers", () => {
       const counts = computeVoiceCatalogCounts(sampleVoices, "free");
-      // Available: premade (1) + cloned (1) + shared free (1) = 3
-      // Restricted: shared pro 4 (1) + shared pro 5 (1) = 2
-      // Unknown: unverified 6 (1) = 1
+      // Under UX 03.1:
+      // Available: premade 1 + premade 2 = 2
+      // Restricted: shared 3 + shared 4 + shared 5 = 3
+      // Unknown: unverified 6 = 1
       // Total: 6
-      expect(counts.available).toBe(3);
-      expect(counts.restricted).toBe(2);
+      expect(counts.available).toBe(2);
+      expect(counts.restricted).toBe(3);
       expect(counts.unknown).toBe(1);
       expect(counts.total).toBe(6);
     });
@@ -107,20 +115,20 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
   describe("Free Account Filtering (Section 2 & 3)", () => {
     it("available filter shows only available voices, hiding restricted and unknown voices", () => {
       const filtered = filterAndSortVoiceCatalog(sampleVoices, "available", "free");
-      expect(filtered.length).toBe(3);
+      expect(filtered.length).toBe(2);
       expect(filtered.map((v) => v.voiceId)).toEqual([
         "voice-premade-1",
-        "voice-cloned-2",
-        "voice-shared-free-3",
+        "voice-premade-2",
       ]);
+      expect(filtered.some((v) => v.voiceId === "voice-shared-free-3")).toBe(false);
       expect(filtered.some((v) => v.voiceId === "voice-shared-pro-4")).toBe(false);
-      expect(filtered.some((v) => v.voiceId === "voice-unverified-6")).toBe(false);
     });
 
     it("restricted filter shows only restricted voices requiring a plan upgrade", () => {
       const filtered = filterAndSortVoiceCatalog(sampleVoices, "restricted", "free");
-      expect(filtered.length).toBe(2);
+      expect(filtered.length).toBe(3);
       expect(filtered.map((v) => v.voiceId)).toEqual([
+        "voice-shared-free-3",
         "voice-shared-pro-4",
         "voice-shared-pro-5",
       ]);
@@ -142,12 +150,12 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       const availabilities = sorted.map(
         (v) => checkVoicePlanAvailability(v, "free").availability
       );
-      // First 3 should be available
-      expect(availabilities.slice(0, 3)).toEqual(["available", "available", "available"]);
-      // 4th should be unknown
-      expect(availabilities[3]).toBe("unknown");
-      // Last 2 should be restricted
-      expect(availabilities.slice(4)).toEqual(["restricted", "restricted"]);
+      // First 2 should be available (premade)
+      expect(availabilities.slice(0, 2)).toEqual(["available", "available"]);
+      // 3rd should be unknown
+      expect(availabilities[2]).toBe("unknown");
+      // Last 3 should be restricted (shared library)
+      expect(availabilities.slice(3)).toEqual(["restricted", "restricted", "restricted"]);
     });
   });
 
@@ -158,24 +166,29 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       expect(results.length).toBe(2);
       expect(results.map((v) => v.voiceId)).toEqual([
         "voice-premade-1",
-        "voice-shared-free-3",
+        "voice-premade-2",
       ]);
-      // The restricted "Bella - Community Pro Only" is excluded
+      // Shared voices are strictly excluded from AVAILABLE on Free
+      expect(results.some((v) => v.voiceId === "voice-shared-free-3")).toBe(false);
       expect(results.some((v) => v.voiceId === "voice-shared-pro-4")).toBe(false);
     });
 
-    it("searches Bella inside REQUIEREN PLAN filter and only returns restricted Bella", () => {
+    it("searches Bella inside REQUIEREN PLAN filter and returns restricted Bella voices", () => {
       const results = filterAndSortVoiceCatalog(sampleVoices, "restricted", "free", "Bella");
-      expect(results.length).toBe(1);
-      expect(results[0].voiceId).toBe("voice-shared-pro-4");
+      expect(results.length).toBe(2);
+      expect(results.map((v) => v.voiceId)).toEqual([
+        "voice-shared-free-3",
+        "voice-shared-pro-4",
+      ]);
     });
 
     it("searches Bella inside ALL filter and returns all Bella voices sorted by availability", () => {
       const results = filterAndSortVoiceCatalog(sampleVoices, "all", "free", "Bella");
-      expect(results.length).toBe(3);
+      expect(results.length).toBe(4);
       expect(results[0].voiceId).toBe("voice-premade-1");
-      expect(results[1].voiceId).toBe("voice-shared-free-3");
-      expect(results[2].voiceId).toBe("voice-shared-pro-4");
+      expect(results[1].voiceId).toBe("voice-premade-2");
+      expect(results[2].voiceId).toBe("voice-shared-free-3");
+      expect(results[3].voiceId).toBe("voice-shared-pro-4");
     });
   });
 
@@ -192,7 +205,7 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       const badge = getVoicePlanBadgeLabel(sampleVoices[3], "free");
       const helper = getVoicePlanHelperText(sampleVoices[3], "free");
       expect(badge).toBe("PLAN REQUERIDO");
-      expect(helper).toBe("Esta voz requiere un plan compatible de ElevenLabs.");
+      expect(helper).toBe("No disponible mediante la API de ElevenLabs en el plan gratuito.");
     });
 
     it("unknown voice has correct badge and helper text", () => {

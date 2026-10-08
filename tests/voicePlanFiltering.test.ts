@@ -64,18 +64,18 @@ describe("UX 02: Voice Plan Filtering & Availability Classification", () => {
       expect(check.isBlockedForSynthesis).toBe(false);
     });
 
-    it("marks account cloned voices as DISPONIBLE GRATIS", () => {
+    it("marks account cloned voices as POR VERIFICAR on Free without explicit tier permission (UX 03.1)", () => {
       const check = checkVoicePlanAvailability(accountClonedVoice, "free");
-      expect(check.availability).toBe("available");
-      expect(check.badgeLabel).toBe("DISPONIBLE GRATIS");
-      expect(check.isBlockedForSynthesis).toBe(false);
+      expect(check.availability).toBe("unknown");
+      expect(check.badgeLabel).toBe("POR VERIFICAR");
     });
 
-    it("marks shared voice with freeUsersAllowed=true as DISPONIBLE GRATIS", () => {
+    it("marks shared voice as PLAN REQUERIDO on Free account even if freeUsersAllowed=true (UX 03.1)", () => {
       const check = checkVoicePlanAvailability(sharedFreeAllowedVoice, "free");
-      expect(check.availability).toBe("available");
-      expect(check.badgeLabel).toBe("DISPONIBLE GRATIS");
-      expect(check.isBlockedForSynthesis).toBe(false);
+      expect(check.availability).toBe("restricted");
+      expect(check.badgeLabel).toBe("PLAN REQUERIDO");
+      expect(check.isBlockedForSynthesis).toBe(true);
+      expect(check.reason).toContain("Las voces de Voice Library no están disponibles mediante la API");
     });
 
     it("marks shared voice with freeUsersAllowed=false as PLAN REQUERIDO and blocks synthesis", () => {
@@ -83,8 +83,7 @@ describe("UX 02: Voice Plan Filtering & Availability Classification", () => {
       expect(check.availability).toBe("restricted");
       expect(check.badgeLabel).toBe("PLAN REQUERIDO");
       expect(check.isBlockedForSynthesis).toBe(true);
-      expect(check.reason).toContain("Esta voz requiere un plan de ElevenLabs compatible.");
-      expect(check.reason).toContain("actualizar tu plan directamente en ElevenLabs.");
+      expect(check.reason).toContain("Las voces de Voice Library no están disponibles mediante la API");
     });
   });
 
@@ -108,7 +107,7 @@ describe("UX 02: Voice Plan Filtering & Availability Classification", () => {
     it("does not falsely classify ambiguous voices as free or paid without evidence", () => {
       const checkUnknown = checkVoicePlanAvailability(unclassifiedVoice, null);
       expect(checkUnknown.availability).toBe("unknown");
-      expect(checkUnknown.badgeLabel).toBe("DISPONIBILIDAD POR VERIFICAR");
+      expect(checkUnknown.badgeLabel).toBe("POR VERIFICAR");
       expect(checkUnknown.isBlockedForSynthesis).toBe(false);
     });
 
