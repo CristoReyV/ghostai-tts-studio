@@ -34,6 +34,7 @@ import type {
   GatewayVoice,
   VoiceLibraryVoice,
   VoiceLibraryQueryParams,
+  VoiceOrigin,
 } from "../types/tts";
 import {
   fetchVoiceLibrary,
@@ -59,6 +60,7 @@ import {
   filterAndSortVoiceCatalog,
   getVoicePlanHelperText,
   getVoicePlanBadgeLabel,
+  mergeVoiceProvenance,
 } from "../services/voiceLibrary";
 
 export const CATALOG_PAGE_SIZE = 12;
@@ -280,7 +282,15 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
       try {
         const res = await fetchVoiceLibrary(queryParams, controller.signal);
-        setLibraryVoices(res.voices);
+        const mappedVoices = res.voices.map((v) => {
+          const inColl = accountVoiceIds.has(v.voiceId);
+          return {
+            ...v,
+            sharedLibraryOrigin: true,
+            voiceOrigin: (inColl ? "library_copy" : "shared_library") as VoiceOrigin,
+          };
+        });
+        setLibraryVoices(mappedVoices);
         setHasMore(res.hasMore);
         setTotalCountCatalog(res.totalCount);
       } catch (err: unknown) {
@@ -331,9 +341,21 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     try {
       const res = await fetchVoiceLibrary(queryParams);
       setLibraryVoices((prev) => {
-        const existingIds = new Set(prev.map((v) => v.voiceId));
-        const newUnique = res.voices.filter((v) => !existingIds.has(v.voiceId));
-        return [...prev, ...newUnique];
+        const existingMap = new Map(prev.map((v) => [v.voiceId, v]));
+        for (const raw of res.voices) {
+          const inColl = accountVoiceIds.has(raw.voiceId);
+          const incoming: VoiceLibraryVoice = {
+            ...raw,
+            sharedLibraryOrigin: true,
+            voiceOrigin: (inColl ? "library_copy" : "shared_library") as VoiceOrigin,
+          };
+          if (existingMap.has(raw.voiceId)) {
+            existingMap.set(raw.voiceId, mergeVoiceProvenance(existingMap.get(raw.voiceId)!, incoming));
+          } else {
+            existingMap.set(raw.voiceId, incoming);
+          }
+        }
+        return Array.from(existingMap.values());
       });
       setPage(nextPage);
       setHasMore(res.hasMore);
@@ -887,6 +909,10 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
               const isSelected = selectedVoiceId === voice.voiceId;
               const isPlaying = playingVoiceId === voice.voiceId;
               const isAdding = addingVoiceId === voice.voiceId;
+              const evaluatedVoice: VoiceLibraryVoice = isInCollection
+                ? { ...voice, voiceOrigin: "library_copy", sharedLibraryOrigin: true }
+                : { ...voice, sharedLibraryOrigin: true };
+              const voicePlan = checkVoicePlanAvailability(evaluatedVoice, providerTier);
 
               return (
                 <div
@@ -913,18 +939,13 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                     </div>
 
                     <div className="card-status-badges">
-                      {(() => {
-                        const voicePlan = checkVoicePlanAvailability(voice, providerTier);
-                        return (
-                          <span
-                            className={`badge-plan-availability badge-plan-${voicePlan.availability}`}
-                            data-testid={`badge-plan-${voice.voiceId}`}
-                            title={voicePlan.reason || getVoicePlanBadgeLabel(voice, providerTier)}
-                          >
-                            {getVoicePlanBadgeLabel(voice, providerTier)}
-                          </span>
-                        );
-                      })()}
+                      <span
+                        className={`badge-plan-availability badge-plan-${voicePlan.availability}`}
+                        data-testid={`badge-plan-${voice.voiceId}`}
+                        title={voicePlan.reason || getVoicePlanBadgeLabel(evaluatedVoice, providerTier)}
+                      >
+                        {getVoicePlanBadgeLabel(evaluatedVoice, providerTier)}
+                      </span>
                       {isSelected && (
                         <span className="badge-selected">
                           <Check size={12} className="mr-1" /> SELECCIONADA
@@ -940,7 +961,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
                   {/* UX 03: Helper text explicativo del estado de disponibilidad de plan */}
                   <div className="voice-card-plan-helper" data-testid={`helper-plan-${voice.voiceId}`}>
-                    {getVoicePlanHelperText(voice, providerTier)}
+                    {getVoicePlanHelperText(evaluatedVoice, providerTier)}
                   </div>
 
                   {/* Metadata Tags */}
@@ -1010,7 +1031,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                     )}
 
                     {(() => {
-                      const voicePlan = checkVoicePlanAvailability(voice, providerTier);
                       const isRestricted = voicePlan.availability === "restricted";
                       const isUnavailableToAdd = !isInCollection && !voice.publicOwnerId;
                       const requiresAuth = !isInCollection && !isAuthenticated;

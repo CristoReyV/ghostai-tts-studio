@@ -777,11 +777,37 @@ export interface VoicePlanAvailabilityResult {
  */
 export function determineVoiceOrigin(voice: {
   voiceOrigin?: VoiceOrigin;
+  sharedLibraryOrigin?: boolean;
   category?: string | null;
   publicOwnerId?: string | null;
   isOwner?: boolean | null;
 }): VoiceOrigin {
-  if (voice.voiceOrigin) return voice.voiceOrigin;
+  // If explicitly flagged as shared library origin
+  if (voice.sharedLibraryOrigin) {
+    if (voice.voiceOrigin === "library_copy") return "library_copy";
+    return "shared_library";
+  }
+
+  // Explicit authoritative voiceOrigin from Gateway / ElevenLabs API buckets
+  if (voice.voiceOrigin && voice.voiceOrigin !== "unknown") {
+    return voice.voiceOrigin;
+  }
+
+  // Authoritative bucket mappings by category / properties
+  if (voice.category === "default" || voice.category === "premade") {
+    return "default";
+  }
+  if (voice.category === "community") {
+    return "library_copy";
+  }
+  if (voice.category === "personal") {
+    return "personal";
+  }
+  if (voice.category === "workspace") {
+    return "workspace";
+  }
+
+  // Shared library fallbacks (from /v1/shared-voices)
   if (
     voice.publicOwnerId ||
     voice.category === "professional" ||
@@ -790,21 +816,18 @@ export function determineVoiceOrigin(voice: {
   ) {
     return "shared_library";
   }
-  if (voice.category === "premade") {
-    return "premade";
+
+  // Custom / cloned
+  if (voice.isOwner === true || voice.category === "cloned" || voice.category === "generated") {
+    return "personal";
   }
-  if (voice.isOwner === true) {
-    return "owned";
-  }
-  if (voice.category === "cloned" || voice.category === "generated") {
-    return "owned";
-  }
+
   return "unknown";
 }
 
 /**
  * Evaluates whether a voice is usable by the current ElevenLabs account based on
- * provider subscription capabilities (tier) and voice provenance (UX 03.1).
+ * provider subscription capabilities (tier) and voice provenance (UX 03.1 & UX 03.2).
  *
  * OFFICIAL ELEVENLABS RULE:
  * "Voice Library voices are not available via the API to free tier users."
@@ -821,6 +844,7 @@ export function checkVoicePlanAvailability(
     name?: string;
     category?: string | null;
     voiceOrigin?: VoiceOrigin;
+    sharedLibraryOrigin?: boolean;
     libraryAllowsFreeUsers?: boolean | null;
     freeUsersAllowed?: boolean | null;
     publicOwnerId?: string | null;
@@ -835,6 +859,10 @@ export function checkVoicePlanAvailability(
   const isFree = normTier === "free";
   const isPaid = normTier.length > 0 && normTier !== "free" && normTier !== "unknown";
   const origin = determineVoiceOrigin(voice);
+  const isSharedOrigin =
+    voice.sharedLibraryOrigin === true ||
+    origin === "shared_library" ||
+    origin === "library_copy";
 
   // 1. Paid Account:
   // Voice Library & custom voices are available via API unless explicitly tier-restricted
@@ -845,7 +873,7 @@ export function checkVoicePlanAvailability(
         return {
           availability: "restricted",
           badgeLabel: "PLAN REQUERIDO",
-          reason: `Esta voz requiere un plan de ElevenLabs superior (${voice.availableForTiers.join(", ")}).`,
+          reason: `Esta voz requiere un plan de ElevenLabs superior (${voice.availableForTiers.join(', ')}).`,
           isBlockedForSynthesis: true,
         };
       }
@@ -859,9 +887,17 @@ export function checkVoicePlanAvailability(
 
   // 2. Free Account:
   if (isFree) {
-    // HARD RULE (UX 03.1 Section 4):
-    // Shared library voices and library copies are strictly blocked from API synthesis on Free tier
-    if (origin === "shared_library" || origin === "library_copy") {
+    // AUTHORITATIVE ELEVENLABS RULE (UX 03.2 Section 1, 2):
+    // "Voice Library voices are not available via the API to Free-tier users."
+    // Any voice whose source is Voice Library (shared_library or library_copy)
+    // is RESTRICTED on Free account.
+    // This rule OVERRIDES:
+    // - freeUsersAllowed = true
+    // - isBookmarked = true
+    // - collection_ids present
+    // - "EN TU COLECCIÓN"
+    // NO "POR VERIFICAR". NO "DISPONIBLE".
+    if (isSharedOrigin) {
       return {
         availability: "restricted",
         badgeLabel: "PLAN REQUERIDO",
@@ -871,8 +907,8 @@ export function checkVoicePlanAvailability(
       };
     }
 
-    // Premade voices: Default built-in provider voices are universally API-synthesizable on Free
-    if (origin === "premade") {
+    // Default provider voices: universally synthesizable on Free unless availableForTiers explicitly excludes free
+    if (origin === "default" || origin === "premade") {
       if (Array.isArray(voice.availableForTiers) && voice.availableForTiers.length > 0) {
         const freeAllowed = voice.availableForTiers.some((t) => t.toLowerCase() === "free");
         if (!freeAllowed) {
@@ -891,8 +927,8 @@ export function checkVoicePlanAvailability(
       };
     }
 
-    // Owned custom voices (cloned / generated): check explicit tier capability evidence (Section 8)
-    if (origin === "owned") {
+    // Personal cloned / generated voices: check availableForTiers
+    if (origin === "personal" || origin === "owned") {
       if (Array.isArray(voice.availableForTiers) && voice.availableForTiers.includes("free")) {
         return {
           availability: "available",
@@ -900,16 +936,25 @@ export function checkVoicePlanAvailability(
           isBlockedForSynthesis: false,
         };
       }
-      // Fail closed: without positive evidence, classify as unknown rather than assuming available
       return {
         availability: "unknown",
         badgeLabel: "POR VERIFICAR",
-        reason: "No pudimos confirmar la disponibilidad de esta voz propia con tu cuenta gratuita.",
+        reason: "No pudimos confirmar la disponibilidad de esta voz personal con tu cuenta gratuita.",
         isBlockedForSynthesis: false,
       };
     }
 
-    // Fail closed (Section 10): No positive evidence -> unknown
+    // Workspace voices: evaluate capability or unknown
+    if (origin === "workspace") {
+      return {
+        availability: "unknown",
+        badgeLabel: "POR VERIFICAR",
+        reason: "No pudimos confirmar la disponibilidad de esta voz de espacio de trabajo.",
+        isBlockedForSynthesis: false,
+      };
+    }
+
+    // Genuinely uncertain category: fail closed to unknown
     return {
       availability: "unknown",
       badgeLabel: "POR VERIFICAR",
@@ -927,7 +972,7 @@ export function checkVoicePlanAvailability(
     };
   }
 
-  if (origin === "premade") {
+  if (origin === "default" || origin === "premade") {
     return {
       availability: "available",
       badgeLabel: "DISPONIBLE",
@@ -943,10 +988,6 @@ export function checkVoicePlanAvailability(
   };
 }
 
-/**
- * User-friendly error message formatter translating technical provider errors.
- * Never exposes raw HTTP codes, stack traces, or internal URLs to the public UI.
- */
 export function formatVoiceAvailabilityError(statusCode?: number, rawError?: string): string {
   const err = (rawError || "").toLowerCase();
 
@@ -1122,6 +1163,7 @@ export function getVoicePlanHelperText(
   voice: {
     category?: string | null;
     voiceOrigin?: VoiceOrigin;
+    sharedLibraryOrigin?: boolean;
     publicOwnerId?: string | null;
     libraryAllowsFreeUsers?: boolean | null;
     freeUsersAllowed?: boolean | null;
@@ -1132,8 +1174,12 @@ export function getVoicePlanHelperText(
   const normTier = (tier || "").trim().toLowerCase();
   const isFree = normTier === "free";
   const origin = determineVoiceOrigin(voice);
+  const isSharedOrigin =
+    voice.sharedLibraryOrigin === true ||
+    origin === "shared_library" ||
+    origin === "library_copy";
 
-  if (isFree && (origin === "shared_library" || origin === "library_copy")) {
+  if (isFree && isSharedOrigin) {
     return "No disponible mediante la API de ElevenLabs en el plan gratuito.";
   }
 
@@ -1147,9 +1193,6 @@ export function getVoicePlanHelperText(
   return "No pudimos confirmar la disponibilidad con tu cuenta.";
 }
 
-/**
- * Returns user-facing badge label for voice cards per UX 03 Section 5.
- */
 export function getVoicePlanBadgeLabel(
   voice: {
     category?: string | null;
@@ -1175,4 +1218,36 @@ export function getVoicePlanBadgeLabel(
     return "PLAN REQUERIDO";
   }
   return "POR VERIFICAR";
+}
+
+/**
+ * Merges two voice records ensuring shared library source provenance is NEVER lost (UX 03.2 Section 4).
+ * Once a voice is known to originate from /v1/shared-voices (sharedLibraryOrigin = true),
+ * that origin survives all merges.
+ * If that voice also appears in /v2/voices?voice_type=community, its provenance strengthens to "library_copy".
+ */
+export function mergeVoiceProvenance<
+  T extends {
+    voiceId: string;
+    voiceOrigin?: VoiceOrigin;
+    sharedLibraryOrigin?: boolean;
+  }
+>(base: T, update: Partial<T>): T {
+  const isShared = base.sharedLibraryOrigin === true || update.sharedLibraryOrigin === true;
+  let finalOrigin: VoiceOrigin = update.voiceOrigin || base.voiceOrigin || "unknown";
+
+  if (isShared) {
+    if (base.voiceOrigin === "library_copy" || update.voiceOrigin === "library_copy") {
+      finalOrigin = "library_copy";
+    } else {
+      finalOrigin = "shared_library";
+    }
+  }
+
+  return {
+    ...base,
+    ...update,
+    sharedLibraryOrigin: isShared,
+    voiceOrigin: finalOrigin,
+  };
 }

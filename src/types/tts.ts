@@ -53,7 +53,7 @@ export interface StudioNarrationItem extends GhostAiTtsItem {
   responseBytes?: number;
 }
 
-export type VoiceOrigin = "premade" | "shared_library" | "owned" | "library_copy" | "unknown";
+export type VoiceOrigin = "default" | "premade" | "shared_library" | "library_copy" | "personal" | "workspace" | "owned" | "unknown";
 
 export interface GatewayVoice {
   voiceId: string;
@@ -64,6 +64,7 @@ export interface GatewayVoice {
   availableForTiers?: string[] | null;
   isOwner?: boolean | null;
   voiceOrigin?: VoiceOrigin;
+  sharedLibraryOrigin?: boolean;
   libraryAllowsFreeUsers?: boolean | null;
   publicOwnerId?: string | null;
 }
@@ -128,6 +129,7 @@ export interface VoiceLibraryVoice {
   libraryAllowsFreeUsers?: boolean;
   freeUsersAllowed: boolean;
   voiceOrigin?: VoiceOrigin;
+  sharedLibraryOrigin?: boolean;
   isBookmarked?: boolean;
   isAddedByUser?: boolean;
   availableForTiers?: string[] | null;
