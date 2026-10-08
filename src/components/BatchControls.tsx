@@ -54,6 +54,11 @@ import {
   translateDescriptiveTag,
   getModelDescription,
   checkVoicePlanAvailability,
+  type VoiceCatalogFilter,
+  computeVoiceCatalogCounts,
+  filterAndSortVoiceCatalog,
+  getVoicePlanHelperText,
+  getVoicePlanBadgeLabel,
 } from "../services/voiceLibrary";
 
 export const CATALOG_PAGE_SIZE = 12;
@@ -132,11 +137,23 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
   // Voice Library Availability Filter Tab (UX 02)
-  const [availabilityFilter, setAvailabilityFilter] = useState<"all" | "available" | "restricted">("all");
+  // Voice Library Availability Filter Tab (UX 03: default is "available")
+  const [availabilityFilter, setAvailabilityFilter] = useState<VoiceCatalogFilter>("available");
 
   const normTier = (providerTier || "").trim().toLowerCase();
   const isFree = normTier === "free";
   const isPaid = normTier.length > 0 && normTier !== "free" && normTier !== "unknown";
+
+  // Dynamic catalog counts for all availability categories (UX 03 Section 4)
+  const planCounts = useMemo(() => {
+    return computeVoiceCatalogCounts(libraryVoices, providerTier);
+  }, [libraryVoices, providerTier]);
+
+  // Clean account plan status label (UX 03 Section 10)
+  const displayTierName = useMemo(() => {
+    if (!providerTier || isFree || normTier === "unknown") return "Free";
+    return providerTier.charAt(0).toUpperCase() + providerTier.slice(1);
+  }, [providerTier, isFree, normTier]);
 
   // Search State with Debounce
   const [searchInput, setSearchInput] = useState<string>("");
@@ -409,7 +426,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
         type: "error",
         message:
           planCheck.reason ||
-          "Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.",
+          "La voz seleccionada no está disponible con tu plan actual. Elige una voz disponible para continuar.",
       });
       return;
     }
@@ -456,27 +473,15 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     }
   };
 
-  // Filtered and sorted voices according to plan availability (UX 02)
+  // Filtered and sorted voices according to plan availability & search (UX 03)
   const displayedVoices = useMemo(() => {
-    let list = libraryVoices;
-    if (availabilityFilter === "available") {
-      list = list.filter(
-        (v) => checkVoicePlanAvailability(v, providerTier).availability === "available"
-      );
-    } else if (availabilityFilter === "restricted") {
-      list = list.filter(
-        (v) => checkVoicePlanAvailability(v, providerTier).availability === "restricted"
-      );
-    }
-    // Available voices appear first per UX 02 Section 13
-    return [...list].sort((a, b) => {
-      const aAvail = checkVoicePlanAvailability(a, providerTier).availability;
-      const bAvail = checkVoicePlanAvailability(b, providerTier).availability;
-      if (aAvail === "available" && bAvail !== "available") return -1;
-      if (aAvail !== "available" && bAvail === "available") return 1;
-      return 0;
-    });
-  }, [libraryVoices, availabilityFilter, providerTier]);
+    return filterAndSortVoiceCatalog(
+      libraryVoices,
+      availabilityFilter,
+      providerTier,
+      debouncedSearch
+    );
+  }, [libraryVoices, availabilityFilter, providerTier, debouncedSearch]);
 
   // Selected voice plan check
   const selectedVoiceObj = useMemo(() => {
@@ -763,6 +768,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           </div>
 
           <div className="catalog-status-info">
+            <span className="catalog-plan-status" data-testid="catalog-plan-status">
+              ElevenLabs {displayTierName}
+            </span>
             {isLoadingCatalog && (
               <span className="catalog-loading-badge">
                 <Loader2 size={14} className="animate-spin mr-1" /> Cargando catálogo...
@@ -771,23 +779,27 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           </div>
         </div>
 
-        {/* UX 02: PESTAÑAS DE FILTRO POR DISPONIBILIDAD DE PLAN */}
+        {/* UX 03: PESTAÑAS DE FILTRO POR DISPONIBILIDAD DE PLAN CON CONTEO REAL */}
         <div className="availability-filter-tabs" data-testid="voice-plan-tabs">
-          <button
-            type="button"
-            className={`tab-availability-btn ${availabilityFilter === "all" ? "active" : ""}`}
-            onClick={() => setAvailabilityFilter("all")}
-            data-testid="tab-all-voices"
-          >
-            TODAS
-          </button>
           <button
             type="button"
             className={`tab-availability-btn ${availabilityFilter === "available" ? "active" : ""}`}
             onClick={() => setAvailabilityFilter("available")}
             data-testid="tab-available-voices"
           >
-            {isPaid ? "DISPONIBLES CON TU PLAN" : isFree ? "DISPONIBLES GRATIS" : "DISPONIBLES"}
+            {isPaid
+              ? `DISPONIBLES CON TU PLAN (${planCounts.available})`
+              : isFree
+              ? `DISPONIBLES GRATIS (${planCounts.available})`
+              : `DISPONIBLES (${planCounts.available})`}
+          </button>
+          <button
+            type="button"
+            className={`tab-availability-btn ${availabilityFilter === "all" ? "active" : ""}`}
+            onClick={() => setAvailabilityFilter("all")}
+            data-testid="tab-all-voices"
+          >
+            TODAS (${planCounts.total})
           </button>
           <button
             type="button"
@@ -795,7 +807,17 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
             onClick={() => setAvailabilityFilter("restricted")}
             data-testid="tab-restricted-voices"
           >
-            {isPaid ? "REQUIEREN PLAN SUPERIOR" : isFree ? "REQUIEREN PLAN" : "PLAN REQUERIDO"}
+            {isPaid
+              ? `REQUIEREN PLAN SUPERIOR (${planCounts.restricted})`
+              : `REQUIEREN PLAN (${planCounts.restricted})`}
+          </button>
+          <button
+            type="button"
+            className={`tab-availability-btn ${availabilityFilter === "unknown" ? "active" : ""}`}
+            onClick={() => setAvailabilityFilter("unknown")}
+            data-testid="tab-unknown-voices"
+          >
+            POR VERIFICAR (${planCounts.unknown})
           </button>
         </div>
 
@@ -893,9 +915,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                           <span
                             className={`badge-plan-availability badge-plan-${voicePlan.availability}`}
                             data-testid={`badge-plan-${voice.voiceId}`}
-                            title={voicePlan.reason || voicePlan.badgeLabel}
+                            title={voicePlan.reason || getVoicePlanBadgeLabel(voice, providerTier)}
                           >
-                            {voicePlan.badgeLabel}
+                            {getVoicePlanBadgeLabel(voice, providerTier)}
                           </span>
                         );
                       })()}
@@ -910,6 +932,11 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                         </span>
                       )}
                     </div>
+                  </div>
+
+                  {/* UX 03: Helper text explicativo del estado de disponibilidad de plan */}
+                  <div className="voice-card-plan-helper" data-testid={`helper-plan-${voice.voiceId}`}>
+                    {getVoicePlanHelperText(voice, providerTier)}
                   </div>
 
                   {/* Metadata Tags */}
@@ -1222,12 +1249,12 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
         <div className="action-bar-left" />
 
         <div className="action-bar-right">
-          {/* Warning if selected voice requires another plan (UX 02 Section 15 & 16) */}
+          {/* Warning if selected voice requires another plan (UX 03 Section 8) */}
           {isSelectedVoiceRestricted && (
             <div className="selected-voice-plan-warning" data-testid="selected-voice-plan-warning">
               <AlertCircle size={15} className="mr-1.5 flex-shrink-0 text-amber" />
               <span>
-                Esta voz requiere un plan de ElevenLabs compatible. Puedes elegir una voz disponible con tu cuenta o actualizar tu plan directamente en ElevenLabs.
+                La voz seleccionada no está disponible con tu plan actual. Elige una voz disponible para continuar.
               </span>
             </div>
           )}

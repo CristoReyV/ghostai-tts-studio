@@ -852,8 +852,9 @@ export function checkVoicePlanAvailability(
     };
   }
 
-  // If we cannot confirm tier or voice availability
-  if (!normTier || normTier === "unknown") {
+  // If freeUsersAllowed is not specified on a shared voice or account tier is unverified,
+  // classify as unknown rather than assuming available or restricted (UX 03 Section 1 & 13)
+  if (voice.freeUsersAllowed === undefined || !normTier || normTier === "unknown") {
     return {
       availability: "unknown",
       badgeLabel: "DISPONIBILIDAD POR VERIFICAR",
@@ -916,4 +917,165 @@ export function formatVoiceAvailabilityError(statusCode?: number, rawError?: str
   }
 
   return "No se pudo procesar la narración con la voz seleccionada.";
+}
+
+
+export type VoiceCatalogFilter = "available" | "all" | "restricted" | "unknown";
+
+export interface VoiceCatalogCounts {
+  available: number;
+  restricted: number;
+  unknown: number;
+  total: number;
+}
+
+/**
+ * Computes dynamic catalog counts for all availability categories from current loaded voice list.
+ * Never uses hardcoded numbers (UX 03 Section 4).
+ */
+export function computeVoiceCatalogCounts(
+  voices: Array<{
+    category?: string | null;
+    freeUsersAllowed?: boolean;
+    labels?: Record<string, string>;
+  }>,
+  tier?: string | null
+): VoiceCatalogCounts {
+  let available = 0;
+  let restricted = 0;
+  let unknown = 0;
+  for (const v of voices) {
+    const check = checkVoicePlanAvailability(v, tier);
+    if (check.availability === "available") {
+      available++;
+    } else if (check.availability === "restricted") {
+      restricted++;
+    } else {
+      unknown++;
+    }
+  }
+  return {
+    available,
+    restricted,
+    unknown,
+    total: voices.length,
+  };
+}
+
+/**
+ * Filters and sorts catalog voices based on active plan availability filter and search query (UX 03 Sections 2, 6, 9).
+ * - "available": shows only available voices (default for Free accounts)
+ * - "restricted": shows only restricted voices
+ * - "unknown": shows only voices with unverified plan status
+ * - "all": shows all voices sorted (available first, unknown second, restricted last)
+ * - Search: operates strictly inside the active filter.
+ */
+export function filterAndSortVoiceCatalog<
+  T extends {
+    name: string;
+    category?: string | null;
+    freeUsersAllowed?: boolean;
+    labels?: Record<string, string>;
+    description?: string | null;
+    useCase?: string | null;
+  }
+>(
+  voices: T[],
+  filter: VoiceCatalogFilter,
+  tier?: string | null,
+  searchQuery?: string
+): T[] {
+  let list = voices;
+
+  // 1. Filter by availability tab
+  if (filter === "available") {
+    list = list.filter(
+      (v) => checkVoicePlanAvailability(v, tier).availability === "available"
+    );
+  } else if (filter === "restricted") {
+    list = list.filter(
+      (v) => checkVoicePlanAvailability(v, tier).availability === "restricted"
+    );
+  } else if (filter === "unknown") {
+    list = list.filter(
+      (v) => checkVoicePlanAvailability(v, tier).availability === "unknown"
+    );
+  }
+
+  // 2. Search query operates inside the active filter (UX 03 Section 9)
+  if (searchQuery && searchQuery.trim().length > 0) {
+    const q = searchQuery.toLowerCase().trim();
+    list = list.filter((v) => {
+      const nameMatch = (v.name || "").toLowerCase().includes(q);
+      const descMatch = (v.description || "").toLowerCase().includes(q);
+      const useCaseMatch = (v.useCase || "").toLowerCase().includes(q);
+      return nameMatch || descMatch || useCaseMatch;
+    });
+  }
+
+  // 3. Sorting (UX 03 Section 6):
+  // For ALL: available first, unknown second, restricted last.
+  // Within same bucket: preserve catalog order.
+  return [...list].sort((a, b) => {
+    const aAvail = checkVoicePlanAvailability(a, tier).availability;
+    const bAvail = checkVoicePlanAvailability(b, tier).availability;
+
+    const rank = (avail: VoicePlanAvailability) => {
+      if (avail === "available") return 1;
+      if (avail === "unknown") return 2;
+      return 3; // restricted
+    };
+
+    const diff = rank(aAvail) - rank(bAvail);
+    if (diff !== 0) return diff;
+    return 0;
+  });
+}
+
+/**
+ * Returns user-facing helper text for voice cards per UX 03 Section 5.
+ */
+export function getVoicePlanHelperText(
+  voice: {
+    category?: string | null;
+    freeUsersAllowed?: boolean;
+    labels?: Record<string, string>;
+  },
+  tier?: string | null
+): string {
+  const check = checkVoicePlanAvailability(voice, tier);
+  if (check.availability === "available") {
+    return "Disponible con tu cuenta actual.";
+  }
+  if (check.availability === "restricted") {
+    return "Esta voz requiere un plan compatible de ElevenLabs.";
+  }
+  return "No pudimos confirmar la disponibilidad con tu cuenta.";
+}
+
+/**
+ * Returns user-facing badge label for voice cards per UX 03 Section 5.
+ */
+export function getVoicePlanBadgeLabel(
+  voice: {
+    category?: string | null;
+    freeUsersAllowed?: boolean;
+    labels?: Record<string, string>;
+  },
+  tier?: string | null
+): string {
+  const normTier = (tier || "").trim().toLowerCase();
+  const isFree = normTier === "free";
+  const isPaid = normTier.length > 0 && normTier !== "free" && normTier !== "unknown";
+  const check = checkVoicePlanAvailability(voice, tier);
+
+  if (check.availability === "available") {
+    if (isFree) return "✓ DISPONIBLE GRATIS";
+    if (isPaid) return "✓ DISPONIBLE CON TU PLAN";
+    return "✓ DISPONIBLE";
+  }
+  if (check.availability === "restricted") {
+    return "PLAN REQUERIDO";
+  }
+  return "POR VERIFICAR";
 }
