@@ -1,11 +1,14 @@
 /**
  * @file src/components/BatchControls.tsx
- * GhostAI TTS Studio — UX 03.3:
- * SEPARATE "VOICES I CAN USE" (SECTION A) FROM "VOICE LIBRARY" (SECTION B)
+ * GhostAI TTS Studio — UX 04:
+ * VOICE WORKFLOW VISUAL HIERARCHY & COMPACT STREAMLINED UI
  *
- * Information Architecture:
- * SECTION A (PRIMARY): VOCES DISPONIBLES CON TU PLAN (Account voices evaluated for positive API usability)
- * SECTION B (SECONDARY): VOICE LIBRARY DE ELEVENLABS (Community exploration, plan-restricted on Free)
+ * Information Hierarchy:
+ * 1. SECTION A: VOCES DISPONIBLES CON TU PLAN (Filters + Initial 8 cards + Expand)
+ * 2. SELECTED VOICE + GENERATE ACTION (Prominent horizontal action bar with pending count & primary CTA)
+ * 3. CONFIGURACIÓN DE GENERACIÓN (Compact Provider BYOK + Model + Format summary, collapsed by default)
+ * 4. CHILDREN (NarrationTable & Utilities / Recovery Vault)
+ * 5. SECTION B: VOICE LIBRARY DE ELEVENLABS (Collapsed by default at bottom)
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
@@ -78,6 +81,7 @@ export interface BatchControlsProps {
   selectedCategory?: OfficialCategory | "all";
   availabilityMap?: VoiceAvailabilityMap;
   initialLibraryVoices?: VoiceLibraryVoice[];
+  initialLibraryExpanded?: boolean;
   onSelectLanguage: (language: string) => void;
   onSelectCategory?: (category: OfficialCategory | "all") => void;
   onSelectVoice: (voiceId: string) => void;
@@ -103,6 +107,44 @@ export interface BatchControlsProps {
   onDisconnectProvider?: () => Promise<void>;
   isEmbedded?: boolean;
   onOpenTopLevel?: () => void;
+  children?: React.ReactNode;
+}
+
+/**
+ * Extracts normalized category group from voice metadata (UX 04 Section 4 & 27).
+ */
+export function getVoiceCategoryGroup(voice: {
+  category?: string | null;
+  labels?: Record<string, string>;
+}): "narracion" | "conversacional" | "publicidad" | "personajes" | "redes" | "educacion" | "general" {
+  const raw = (
+    voice.labels?.use_case ||
+    voice.labels?.["use case"] ||
+    voice.category ||
+    ""
+  ).toLowerCase().trim();
+
+  if (raw.includes("narrat") || raw.includes("story") || raw.includes("audiobook")) return "narracion";
+  if (raw.includes("convers") || raw.includes("dialogue") || raw.includes("casual")) return "conversacional";
+  if (raw.includes("advert") || raw.includes("commercial") || raw.includes("entertain")) return "publicidad";
+  if (raw.includes("character") || raw.includes("animat") || raw.includes("game")) return "personajes";
+  if (raw.includes("social") || raw.includes("creator") || raw.includes("media") || raw.includes("tiktok") || raw.includes("reels")) return "redes";
+  if (raw.includes("educat") || raw.includes("informat")) return "educacion";
+  return "general";
+}
+
+/**
+ * Formats a clean, non-repetitive subtitle for voice cards (UX 04 Section 8).
+ */
+export function formatVoiceSubtitle(voice: {
+  category?: string | null;
+  labels?: Record<string, string>;
+}): string {
+  const useCaseRaw = voice.labels?.use_case || voice.labels?.["use case"];
+  const useCaseText = useCaseRaw ? translateUseCase(useCaseRaw) : translateUseCase(voice.category);
+  const accentRaw = voice.labels?.accent;
+  const accentText = accentRaw ? translateAccent(accentRaw) : "Natural";
+  return `${useCaseText} · ${accentText}`;
 }
 
 export const BatchControls: React.FC<BatchControlsProps> = ({
@@ -135,6 +177,8 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   onConnectProvider,
   onDisconnectProvider,
   initialLibraryVoices,
+  initialLibraryExpanded = false,
+  children,
 }) => {
   // Global Audio Preview Singleton Player
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -156,12 +200,27 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     return new Set(voices.map((v) => v.voiceId));
   }, [voices]);
 
+  // Pending items count
+  const pendingCount = Math.max(0, totalCount - readyCount);
+
+  // Refs
+  const usableSectionRef = useRef<HTMLDivElement | null>(null);
+  const librarySectionRef = useRef<HTMLDivElement | null>(null);
+  const langDropdownRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // UI state for dropdowns & accordions
+  const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
+  const [isSettingsExpanded, setIsSettingsExpanded] = useState(false);
+  const [isModelAdvancedOpen, setIsModelAdvancedOpen] = useState(false);
+  const [isFormatAdvancedOpen, setIsFormatAdvancedOpen] = useState(false);
+
   // =========================================================================
   // SECTION A: USABLE ACCOUNT VOICES (POSITIVE API USABILITY EVIDENCE)
   // =========================================================================
   const usableAccountVoices = useMemo(() => {
     return voices.filter((v) => {
-      // For Free accounts, explicitly exclude shared/library/community copies (UX 03.3 Section 4)
+      // For Free accounts, explicitly exclude shared/library/community copies
       if (isFree) {
         if (
           v.sharedLibraryOrigin === true ||
@@ -178,19 +237,125 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     });
   }, [voices, providerTier, isFree]);
 
-  // Scoped Search for Section A
+  // Usable Voices Dynamic Category Counts & Options (UX 04 Section 4)
+  const usableCategoryOptions = useMemo(() => {
+    const counts: Record<string, number> = {
+      all: usableAccountVoices.length,
+      narracion: 0,
+      conversacional: 0,
+      publicidad: 0,
+      personajes: 0,
+      redes: 0,
+      educacion: 0,
+    };
+    for (const v of usableAccountVoices) {
+      const grp = getVoiceCategoryGroup(v);
+      if (counts[grp] !== undefined) counts[grp]++;
+    }
+
+    const list: Array<{ id: string; label: string; count: number }> = [
+      { id: "all", label: "TODAS", count: counts.all },
+    ];
+    if (counts.narracion > 0) list.push({ id: "narracion", label: "NARRACIÓN", count: counts.narracion });
+    if (counts.conversacional > 0) list.push({ id: "conversacional", label: "CONVERSACIONAL", count: counts.conversacional });
+    if (counts.publicidad > 0) list.push({ id: "publicidad", label: "PUBLICIDAD", count: counts.publicidad });
+    if (counts.personajes > 0) list.push({ id: "personajes", label: "PERSONAJES", count: counts.personajes });
+    if (counts.redes > 0) list.push({ id: "redes", label: "REDES", count: counts.redes });
+    if (counts.educacion > 0) list.push({ id: "educacion", label: "EDUCACIÓN", count: counts.educacion });
+    return list;
+  }, [usableAccountVoices]);
+
+  // Secondary Filter Options derived from usable voices (UX 04 Section 5)
+  const availableUsableGenders = useMemo(() => {
+    const s = new Set<string>();
+    for (const v of usableAccountVoices) {
+      if (v.labels?.gender) s.add(v.labels.gender.toLowerCase().trim());
+    }
+    return Array.from(s).sort();
+  }, [usableAccountVoices]);
+
+  const availableUsableAges = useMemo(() => {
+    const s = new Set<string>();
+    for (const v of usableAccountVoices) {
+      if (v.labels?.age) s.add(v.labels.age.toLowerCase().trim());
+    }
+    return Array.from(s).sort();
+  }, [usableAccountVoices]);
+
+  const availableUsableAccents = useMemo(() => {
+    const s = new Set<string>();
+    for (const v of usableAccountVoices) {
+      if (v.labels?.accent) s.add(v.labels.accent.toLowerCase().trim());
+    }
+    return Array.from(s).sort();
+  }, [usableAccountVoices]);
+
+  // Section A Filter State
+  const [selectedUsableCategory, setSelectedUsableCategory] = useState<string>("all");
+  const [selectedUsableGender, setSelectedUsableGender] = useState<string>("all");
+  const [selectedUsableAge, setSelectedUsableAge] = useState<string>("all");
+  const [selectedUsableAccent, setSelectedUsableAccent] = useState<string>("all");
+  const [isUsableFiltersOpen, setIsUsableFiltersOpen] = useState<boolean>(false);
   const [accountSearchInput, setAccountSearchInput] = useState<string>("");
+
+  const hasActiveUsableFilters =
+    selectedUsableCategory !== "all" ||
+    selectedUsableGender !== "all" ||
+    selectedUsableAge !== "all" ||
+    selectedUsableAccent !== "all" ||
+    accountSearchInput.trim().length > 0;
+
+  // Filtered usable voices (UX 04 Section 6)
   const filteredUsableVoices = useMemo(() => {
-    if (!accountSearchInput.trim()) return usableAccountVoices;
-    const q = accountSearchInput.toLowerCase().trim();
-    return usableAccountVoices.filter((v) => {
-      const nameMatch = (v.name || "").toLowerCase().includes(q);
-      const descMatch = (v.description || "").toLowerCase().includes(q);
-      const categoryMatch = (v.category || "").toLowerCase().includes(q);
-      const useCaseMatch = (v.labels?.use_case || "").toLowerCase().includes(q);
-      return nameMatch || descMatch || categoryMatch || useCaseMatch;
-    });
-  }, [usableAccountVoices, accountSearchInput]);
+    let list = usableAccountVoices;
+
+    if (selectedUsableCategory !== "all") {
+      list = list.filter((v) => getVoiceCategoryGroup(v) === selectedUsableCategory);
+    }
+    if (selectedUsableGender !== "all") {
+      list = list.filter((v) => (v.labels?.gender || "").toLowerCase().trim() === selectedUsableGender);
+    }
+    if (selectedUsableAge !== "all") {
+      list = list.filter((v) => (v.labels?.age || "").toLowerCase().trim() === selectedUsableAge);
+    }
+    if (selectedUsableAccent !== "all") {
+      list = list.filter((v) => (v.labels?.accent || "").toLowerCase().trim() === selectedUsableAccent);
+    }
+    if (accountSearchInput.trim()) {
+      const q = accountSearchInput.toLowerCase().trim();
+      list = list.filter((v) => {
+        const nameMatch = (v.name || "").toLowerCase().includes(q);
+        const descMatch = (v.description || "").toLowerCase().includes(q);
+        const accentMatch = (v.labels?.accent || "").toLowerCase().includes(q);
+        const useCaseMatch = (v.labels?.use_case || "").toLowerCase().includes(q);
+        return nameMatch || descMatch || accentMatch || useCaseMatch;
+      });
+    }
+
+    return list;
+  }, [
+    usableAccountVoices,
+    selectedUsableCategory,
+    selectedUsableGender,
+    selectedUsableAge,
+    selectedUsableAccent,
+    accountSearchInput,
+  ]);
+
+  // Section A Initial 8 Card Visibility (UX 04 Section 7)
+  const [isUsableExpanded, setIsUsableExpanded] = useState<boolean>(false);
+  const visibleUsableVoices = useMemo(() => {
+    if (isUsableExpanded) return filteredUsableVoices;
+    return filteredUsableVoices.slice(0, 8);
+  }, [filteredUsableVoices, isUsableExpanded]);
+
+  const handleResetUsableFilters = () => {
+    setSelectedUsableCategory("all");
+    setSelectedUsableGender("all");
+    setSelectedUsableAge("all");
+    setSelectedUsableAccent("all");
+    setAccountSearchInput("");
+  };
 
   // Selected Voice Plan Check
   const selectedVoiceObj = useMemo(() => {
@@ -209,7 +374,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const isSelectedVoiceRestricted = selectedVoicePlanCheck?.availability === "restricted";
 
   // =========================================================================
-  // SECTION B: VOICE LIBRARY CATALOG STATE
+  // SECTION B: VOICE LIBRARY CATALOG STATE (COLLAPSED BY DEFAULT, UX 04 SEC 16-21)
   // =========================================================================
   const [libraryVoices, setLibraryVoices] = useState<VoiceLibraryVoice[]>(() => initialLibraryVoices || []);
   const [page, setPage] = useState<number>(0);
@@ -219,24 +384,18 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
-  // Section B Collapsible State: On Free accounts, default to collapsed or compact view (UX 03.3 Section 30)
-  const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(true);
+  // Voice Library Collapsed by default (UX 04 Section 17)
+  const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(initialLibraryExpanded);
 
-  // Section B Filter Tab: default is "all" on Free (UX 03.3 Section 12)
-  const [libraryFilter, setLibraryFilter] = useState<VoiceCatalogFilter>(() => (isFree ? "all" : "available"));
+  // Voice Library Filter Tab (Redundant "Disponibles con tu plan" removed, UX 04 Sec 19)
+  const [libraryFilter, setLibraryFilter] = useState<VoiceCatalogFilter>("all");
 
-  useEffect(() => {
-    if (isFree && libraryFilter === "available") {
-      setLibraryFilter("all");
-    }
-  }, [isFree]);
-
-  // Voice Library counts
+  // Dynamic counts for Voice Library
   const libraryCounts = useMemo(() => {
     return computeVoiceCatalogCounts(libraryVoices, providerTier, accountVoiceIds);
   }, [libraryVoices, providerTier, accountVoiceIds]);
 
-  // Scoped Search for Section B
+  // Scoped Search for Voice Library
   const [librarySearchInput, setLibrarySearchInput] = useState<string>("");
   const [debouncedLibrarySearch, setDebouncedLibrarySearch] = useState<string>("");
 
@@ -260,15 +419,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     type: "success" | "error";
     message: string;
   } | null>(null);
-
-  // Dropdown state
-  const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
-  const [isModelAdvancedOpen, setIsModelAdvancedOpen] = useState(false);
-  const [isFormatAdvancedOpen, setIsFormatAdvancedOpen] = useState(false);
-
-  const langDropdownRef = useRef<HTMLDivElement | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const librarySectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -296,8 +446,8 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     );
   }, [selectedLanguage]);
 
-  // Compute available accents dynamically
-  const availableAccents = useMemo(() => {
+  // Compute available accents dynamically from library catalog
+  const availableLibraryAccents = useMemo(() => {
     const base = COMMON_LANGUAGE_ACCENTS[selectedLanguage] ?? [];
     const set = new Set<string>(base);
     libraryVoices.forEach((v) => {
@@ -323,7 +473,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     };
   }, []);
 
-  // Fetch Voice Library Catalog from Gateway
+  // Fetch Voice Library Catalog from Gateway (only loads when library is active or initializing)
   const loadCatalog = useCallback(
     async (reset = true) => {
       if (abortControllerRef.current) {
@@ -491,11 +641,10 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     });
   };
 
-  // Add & Use Voice in Section B (Paid users only or add to collection)
+  // Add & Use Voice in Section B (Paid users only)
   const handleUseVoiceLibrary = async (voice: VoiceLibraryVoice) => {
     setActionFeedback(null);
 
-    // Free account guard (UX 03.3 Section 15)
     if (isFree) {
       setActionFeedback({
         type: "error",
@@ -504,7 +653,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       return;
     }
 
-    // If already in collection, select directly
     if (accountVoiceIds.has(voice.voiceId)) {
       onSelectVoice(voice.voiceId);
       setActionFeedback({
@@ -602,6 +750,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
     setLibrarySearchInput("");
   };
 
+  // Smooth scroll shortcut to Voice Library (UX 04 Section 18)
   const handleScrollToLibrary = () => {
     setIsLibraryOpen(true);
     setTimeout(() => {
@@ -637,9 +786,13 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       )}
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* SECTION A (PRIMARY): VOCES DISPONIBLES CON TU PLAN         */}
+      {/* 1. SECTION A (PRIMARY): VOCES DISPONIBLES CON TU PLAN      */}
       {/* ────────────────────────────────────────────────────────── */}
-      <section className="section-usable-voices" data-testid="section-usable-voices">
+      <section
+        ref={usableSectionRef}
+        className="section-usable-voices"
+        data-testid="section-usable-voices"
+      >
         <div className="usable-voices-header-row">
           <div>
             <div className="section-eyebrow-row">
@@ -681,6 +834,21 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 <Info size={14} />
               </button>
             </div>
+
+            {/* Subtle top shortcut to explore additional Voice Library (UX 04 Section 18) */}
+            <div className="usable-shortcut-row">
+              <span className="shortcut-question">¿Buscas más voces?</span>
+              <button
+                type="button"
+                className="btn-shortcut-library"
+                onClick={handleScrollToLibrary}
+                data-testid="shortcut-explore-library"
+              >
+                <Sparkles size={13} className="mr-1" />
+                <span>EXPLORAR VOICE LIBRARY</span>
+              </button>
+            </div>
+
             {isLoadingVoices && (
               <span className="account-voices-loading-badge" data-testid="usable-voices-loading">
                 <Loader2 size={14} className="animate-spin mr-1" /> Comprobando voces disponibles...
@@ -689,48 +857,168 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
           </div>
         </div>
 
-        {/* Selected voice restricted warning banner (UX 03.3 Section 16) */}
+        {/* Selected voice restricted warning banner */}
         {isSelectedVoiceRestricted && (
-          <div className="selected-voice-restricted-banner" data-testid="selected-voice-restricted-banner">
-            <AlertCircle size={16} className="text-amber flex-shrink-0 mr-2" />
-            <div className="restricted-banner-content">
-              <strong>VOZ REQUIERE PLAN</strong>
-              <span>
-                La voz actualmente seleccionada no está disponible para generar narraciones mediante API con tu plan.
-                Por favor selecciona una de las voces disponibles abajo antes de generar.
-              </span>
+          <div
+            className="selected-voice-restricted-banner"
+            data-testid="selected-voice-restricted-banner"
+          >
+            <div data-testid="selected-voice-plan-warning" className="flex items-center gap-2">
+              <AlertCircle size={16} className="text-amber flex-shrink-0 mr-2" />
+              <div className="restricted-banner-content">
+                <strong>VOZ REQUIERE PLAN:</strong>
+                <span>
+                  La voz seleccionada no está disponible con tu plan actual. Elige una voz disponible para continuar.
+                </span>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Scoped Search Input for Section A */}
-        {usableAccountVoices.length > 4 && (
-          <div className="usable-search-row">
-            <div className="voice-search-input-box usable-search-box">
-              <Search size={14} className="search-icon-inside" />
-              <input
-                type="text"
-                className="voice-search-input"
-                placeholder="Buscar entre tus voces disponibles..."
-                value={accountSearchInput}
-                onChange={(e) => setAccountSearchInput(e.target.value)}
-                aria-label="Buscar voz disponible"
-              />
-              {accountSearchInput && (
+        {/* Filter bar for Usable Voices (UX 04 Section 4 & 5) */}
+        {!isLoadingVoices && usableAccountVoices.length > 0 && (
+          <div className="usable-filters-bar" data-testid="usable-filters-bar">
+            {/* Primary Category Filter Pills */}
+            <div className="usable-category-pills">
+              {usableCategoryOptions.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`pill-usable-filter ${selectedUsableCategory === opt.id ? "active" : ""}`}
+                  onClick={() => setSelectedUsableCategory(opt.id)}
+                  data-testid={`filter-usable-${opt.id}`}
+                >
+                  {opt.label} ({opt.count})
+                </button>
+              ))}
+
+              {/* Secondary Filters Toggle */}
+              {(availableUsableGenders.length > 0 || availableUsableAges.length > 0 || availableUsableAccents.length > 0) && (
                 <button
                   type="button"
-                  className="clear-search-btn"
-                  onClick={() => setAccountSearchInput("")}
-                  aria-label="Limpiar búsqueda"
+                  className={`btn-toggle-usable-subfilters ${isUsableFiltersOpen ? "open" : ""}`}
+                  onClick={() => setIsUsableFiltersOpen(!isUsableFiltersOpen)}
+                  data-testid="btn-toggle-usable-subfilters"
                 >
-                  <X size={12} />
+                  <Filter size={13} className="mr-1" />
+                  <span>MÁS FILTROS</span>
+                  {isUsableFiltersOpen ? <ChevronUp size={12} className="ml-1" /> : <ChevronDown size={12} className="ml-1" />}
+                </button>
+              )}
+
+              {hasActiveUsableFilters && (
+                <button
+                  type="button"
+                  className="btn-clear-usable-filters"
+                  onClick={handleResetUsableFilters}
+                >
+                  <RotateCcw size={11} className="mr-1" /> Limpiar
                 </button>
               )}
             </div>
+
+            {/* Secondary Filters Accordion */}
+            {isUsableFiltersOpen && (
+              <div className="usable-subfilters-panel animate-fade-in" data-testid="usable-subfilters-panel">
+                {availableUsableGenders.length > 0 && (
+                  <div className="subfilter-row">
+                    <span className="subfilter-label">Género:</span>
+                    <button
+                      type="button"
+                      className={`pill-subfilter ${selectedUsableGender === "all" ? "active" : ""}`}
+                      onClick={() => setSelectedUsableGender("all")}
+                    >
+                      Todos
+                    </button>
+                    {availableUsableGenders.map((g) => (
+                      <button
+                        key={g}
+                        type="button"
+                        className={`pill-subfilter ${selectedUsableGender === g ? "active" : ""}`}
+                        onClick={() => setSelectedUsableGender(g)}
+                      >
+                        {translateGender(g)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {availableUsableAges.length > 0 && (
+                  <div className="subfilter-row">
+                    <span className="subfilter-label">Edad:</span>
+                    <button
+                      type="button"
+                      className={`pill-subfilter ${selectedUsableAge === "all" ? "active" : ""}`}
+                      onClick={() => setSelectedUsableAge("all")}
+                    >
+                      Todas
+                    </button>
+                    {availableUsableAges.map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        className={`pill-subfilter ${selectedUsableAge === a ? "active" : ""}`}
+                        onClick={() => setSelectedUsableAge(a)}
+                      >
+                        {translateAge(a)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {availableUsableAccents.length > 0 && (
+                  <div className="subfilter-row">
+                    <span className="subfilter-label">Acento:</span>
+                    <button
+                      type="button"
+                      className={`pill-subfilter ${selectedUsableAccent === "all" ? "active" : ""}`}
+                      onClick={() => setSelectedUsableAccent("all")}
+                    >
+                      Todos
+                    </button>
+                    {availableUsableAccents.map((acc) => (
+                      <button
+                        key={acc}
+                        type="button"
+                        className={`pill-subfilter ${selectedUsableAccent === acc ? "active" : ""}`}
+                        onClick={() => setSelectedUsableAccent(acc)}
+                      >
+                        {translateAccent(acc)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Scoped Search Input for Usable Voices (UX 04 Section 6) */}
+            <div className="usable-search-row">
+              <div className="voice-search-input-box usable-search-box">
+                <Search size={14} className="search-icon-inside" />
+                <input
+                  type="text"
+                  className="voice-search-input"
+                  placeholder="Buscar entre tus voces disponibles..."
+                  value={accountSearchInput}
+                  onChange={(e) => setAccountSearchInput(e.target.value)}
+                  aria-label="Buscar voz disponible"
+                />
+                {accountSearchInput && (
+                  <button
+                    type="button"
+                    className="clear-search-btn"
+                    onClick={() => setAccountSearchInput("")}
+                    aria-label="Limpiar búsqueda"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Error State for Section A (UX 03.3 Section 22) */}
+        {/* Error State for Section A */}
         {voicesError ? (
           <div className="usable-error-card" data-testid="usable-voices-error">
             <AlertCircle size={22} className="text-rose mr-3 flex-shrink-0" />
@@ -749,13 +1037,11 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
             )}
           </div>
         ) : isLoadingVoices && usableAccountVoices.length === 0 ? (
-          /* Loading State for Section A (UX 03.3 Section 21: Never show 0 while loading) */
           <div className="usable-loading-state" data-testid="usable-voices-loading-state">
             <Loader2 size={24} className="animate-spin text-accent mb-2" />
             <p>Comprobando voces disponibles para tu plan...</p>
           </div>
         ) : usableAccountVoices.length === 0 ? (
-          /* Explanatory Empty State for Section A (UX 03.3 Section 9) */
           <div className="usable-empty-state" data-testid="usable-voices-empty-state">
             <AlertCircle size={32} className="text-amber mb-2" />
             <h4>NO ENCONTRAMOS VOCES CONFIRMADAS PARA TU PLAN ACTUAL</h4>
@@ -771,302 +1057,498 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
             </button>
           </div>
         ) : (
-          /* Cards Grid for Section A (UX 03.3 Section 7) */
-          <div className="usable-voices-grid" data-testid="usable-voices-grid">
-            {filteredUsableVoices.map((voice) => {
-              const isSelected = selectedVoiceId === voice.voiceId;
-              const isPlaying = playingVoiceId === voice.voiceId;
-              const badgeLabel = isFree ? "✓ DISPONIBLE EN FREE" : "✓ DISPONIBLE CON TU PLAN";
+          <>
+            {/* Cards Grid for Section A (UX 04 Section 7 & 8: initial 8 visible cards) */}
+            <div className="usable-voices-grid" data-testid="usable-voices-grid">
+              {visibleUsableVoices.map((voice) => {
+                const isSelected = selectedVoiceId === voice.voiceId;
+                const isPlaying = playingVoiceId === voice.voiceId;
 
-              return (
-                <div
-                  key={voice.voiceId}
-                  className={`usable-voice-card ${isSelected ? "is-selected" : ""}`}
-                  data-testid={`usable-voice-card-${voice.voiceId}`}
-                >
-                  <div className="usable-card-header">
-                    <div className="usable-avatar-wrap">
-                      <div className={`usable-avatar ${isPlaying ? "playing" : ""}`}>
-                        <Mic size={18} className="text-accent" />
-                        {isPlaying && <span className="avatar-pulse" />}
+                return (
+                  <div
+                    key={voice.voiceId}
+                    className={`usable-voice-card ${isSelected ? "is-selected" : ""}`}
+                    data-testid={`usable-voice-card-${voice.voiceId}`}
+                  >
+                    <div className="usable-card-header">
+                      <div className="usable-avatar-wrap">
+                        <div className={`usable-avatar ${isPlaying ? "playing" : ""}`}>
+                          <Mic size={18} className="text-accent" />
+                          {isPlaying && <span className="avatar-pulse" />}
+                        </div>
+                        <div className="usable-name-group">
+                          <h4 className="usable-card-name" title={voice.name}>
+                            {voice.name}
+                          </h4>
+                          <span className="usable-card-desc">
+                            {formatVoiceSubtitle(voice)}
+                          </span>
+                        </div>
                       </div>
-                      <div className="usable-name-group">
-                        <h4 className="usable-card-name" title={voice.name}>
-                          {voice.name}
-                        </h4>
-                        <span className="usable-card-desc">
-                          {voice.labels?.use_case
-                            ? translateUseCase(voice.labels.use_case)
-                            : voice.category || "Narración · Natural"}
-                        </span>
+
+                      <div className="usable-badges">
+                        {isSelected ? (
+                          <span className="badge-selected-strong" data-testid="badge-in-use">
+                            <Check size={12} className="mr-1" /> VOZ ACTUAL
+                          </span>
+                        ) : (
+                          <span className="badge-usable-simple">
+                            ✓ DISPONIBLE
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    <div className="usable-badges">
-                      <span className="badge-usable-plan">{badgeLabel}</span>
-                      {isSelected && (
-                        <span className="badge-in-use" data-testid="badge-in-use">
-                          <Check size={12} className="mr-1" /> EN USO
-                        </span>
+                    <div className="usable-actions-row">
+                      {voice.previewUrl ? (
+                        <button
+                          type="button"
+                          className={`btn-usable-preview ${isPlaying ? "playing" : ""}`}
+                          onClick={() => handlePlayVoicePreview(voice.voiceId, voice.previewUrl)}
+                          title="Escuchar muestra de voz"
+                        >
+                          {isPlaying ? (
+                            <>
+                              <VolumeX size={14} className="mr-1" /> Detener
+                            </>
+                          ) : (
+                            <>
+                              <Play size={14} className="mr-1" /> Escuchar
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <span className="preview-absent-text">Sin muestra</span>
+                      )}
+
+                      {isSelected ? (
+                        <button
+                          type="button"
+                          className="btn-usable-select in-use"
+                          disabled
+                        >
+                          <Check size={14} className="mr-1" /> Voz actual
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-usable-select"
+                          onClick={() => handleSelectUsableVoice(voice)}
+                        >
+                          Usar voz
+                        </button>
                       )}
                     </div>
                   </div>
+                );
+              })}
+            </div>
 
-                  {/* Actions: Escuchar & Usar Voz */}
-                  <div className="usable-actions-row">
-                    {voice.previewUrl ? (
-                      <button
-                        type="button"
-                        className={`btn-usable-preview ${isPlaying ? "playing" : ""}`}
-                        onClick={() => handlePlayVoicePreview(voice.voiceId, voice.previewUrl)}
-                        title="Escuchar muestra de voz"
-                      >
-                        {isPlaying ? (
-                          <>
-                            <VolumeX size={14} className="mr-1" /> Detener
-                          </>
-                        ) : (
-                          <>
-                            <Play size={14} className="mr-1" /> Escuchar
-                          </>
-                        )}
-                      </button>
-                    ) : (
-                      <span className="preview-absent-text">Sin muestra</span>
-                    )}
-
-                    {isSelected ? (
-                      <button
-                        type="button"
-                        className="btn-usable-select in-use"
-                        disabled
-                      >
-                        <Check size={14} className="mr-1" /> En uso
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn-usable-select"
-                        onClick={() => handleSelectUsableVoice(voice)}
-                      >
-                        Usar voz
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+            {/* Expand / Collapse Button for 8+ cards (UX 04 Section 7) */}
+            {filteredUsableVoices.length > 8 && (
+              <div className="usable-expand-row">
+                <button
+                  type="button"
+                  className="btn-toggle-expand-usable"
+                  onClick={() => setIsUsableExpanded(!isUsableExpanded)}
+                  data-testid="btn-toggle-expand-usable"
+                >
+                  {isUsableExpanded ? (
+                    <>
+                      <ChevronUp size={15} className="mr-1" /> VER MENOS
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={15} className="mr-1" /> VER TODAS LAS VOCES DISPONIBLES ({filteredUsableVoices.length})
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* SECCIÓN PROVEEDOR DE VOZ (BYOK ELEVENLABS)                 */}
+      {/* 2. SELECTED VOICE + GENERATE ACTION BAR (UX 04 SEC 10 & 11)*/}
       {/* ────────────────────────────────────────────────────────── */}
-      {onConnectProvider && onDisconnectProvider && (
-        <VoiceProviderSection
-          isProviderConnected={isProviderConnected}
-          onConnect={onConnectProvider}
-          onDisconnect={onDisconnectProvider}
-          isAuthenticated={isAuthenticated}
-          providerTier={providerTier}
-        />
-      )}
-
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* MODELO Y FORMATO CON CONFIGURACIÓN AVANZADA                */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <div className="tech-config-row">
-        {/* MODELO MAESTRO */}
-        <div className="tech-box">
-          <div className="tech-box-header">
-            <span className="section-eyebrow">MODELO MAESTRO</span>
-            <span className="tech-badge-rec">RECOMENDADO</span>
-          </div>
-          <div className="tech-main-choice">
-            <h4 className="tech-choice-title">
-              {models.find((m) => m.modelId === selectedModelId)?.name ||
-                "Eleven Multilingual v2"}
+      <div className="selected-voice-action-bar" data-testid="selected-voice-action-bar">
+        <div className="action-bar-voice-info">
+          <div className="voice-info-left">
+            <span className="action-bar-eyebrow">VOZ ACTUAL</span>
+            <h4 className="action-bar-voice-name">
+              {selectedVoiceObj?.name || "Sin voz seleccionada"}
             </h4>
-            <p className="tech-choice-desc">
-              {getModelDescription(
-                selectedModelId,
-                models.find((m) => m.modelId === selectedModelId)?.description
-              )}
-            </p>
+            <span className="action-bar-voice-desc">
+              {selectedVoiceObj ? formatVoiceSubtitle(selectedVoiceObj) : "Selecciona una voz de la lista superior"}
+            </span>
           </div>
-
-          <button
-            type="button"
-            className="tech-advanced-toggle"
-            onClick={() => setIsModelAdvancedOpen(!isModelAdvancedOpen)}
-          >
-            <Settings size={14} className="mr-1 text-accent" />
-            <span>⚙ Configuración avanzada de modelo</span>
-            {isModelAdvancedOpen ? (
-              <ChevronUp size={14} className="ml-auto" />
-            ) : (
-              <ChevronDown size={14} className="ml-auto" />
+          <div className="voice-info-actions">
+            {selectedVoiceObj?.previewUrl && (
+              <button
+                type="button"
+                className={`btn-action-preview ${playingVoiceId === selectedVoiceObj.voiceId ? "playing" : ""}`}
+                onClick={() => handlePlayVoicePreview(selectedVoiceObj.voiceId, selectedVoiceObj.previewUrl)}
+              >
+                {playingVoiceId === selectedVoiceObj.voiceId ? (
+                  <VolumeX size={14} className="mr-1" />
+                ) : (
+                  <Play size={14} className="mr-1" />
+                )}
+                <span>{playingVoiceId === selectedVoiceObj.voiceId ? "Detener" : "Escuchar"}</span>
+              </button>
             )}
-          </button>
-
-          {isModelAdvancedOpen && (
-            <div className="advanced-options-panel">
-              <span className="advanced-sublabel">Modelos alternativos disponibles:</span>
-              <div className="advanced-list">
-                {models.map((m) => (
-                  <button
-                    key={m.modelId}
-                    type="button"
-                    className={`advanced-item-btn ${selectedModelId === m.modelId ? "active" : ""}`}
-                    onClick={() => onSelectModel(m.modelId)}
-                  >
-                    <div>
-                      <span className="item-btn-name">{m.name}</span>
-                      <span className="item-btn-desc">
-                        {getModelDescription(m.modelId, m.description)}
-                      </span>
-                    </div>
-                    {selectedModelId === m.modelId && (
-                      <Check size={16} className="text-accent" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+            <button
+              type="button"
+              className="btn-action-change"
+              onClick={() => usableSectionRef.current?.scrollIntoView({ behavior: "smooth" })}
+            >
+              Cambiar voz
+            </button>
+          </div>
         </div>
 
-        {/* FORMATO DE SALIDA */}
-        <div className="tech-box">
-          <div className="tech-box-header">
-            <span className="section-eyebrow">FORMATO DE SALIDA</span>
-            <span className="tech-badge-rec">RECOMENDADO</span>
-          </div>
-          <div className="tech-main-choice">
-            <h4 className="tech-choice-title">
-              {selectedOutputFormat === "mp3_44100_128"
-                ? "MP3 · 44.1 kHz · 128 kbps"
-                : selectedOutputFormat}
-            </h4>
-            <p className="tech-choice-desc">
-              Balance óptimo de compresión y fidelidad sonora certificado para GhostAI.
-            </p>
+        <div className="action-bar-divider" />
+
+        <div className="action-bar-cta-group">
+          <div className="cta-pending-info">
+            <span className="pending-count-number">{pendingCount}</span>
+            <span className="pending-count-label">
+              {pendingCount === 1 ? "narración pendiente" : "narraciones pendientes"}
+            </span>
           </div>
 
-          <button
-            type="button"
-            className="tech-advanced-toggle"
-            onClick={() => setIsFormatAdvancedOpen(!isFormatAdvancedOpen)}
-          >
-            <Settings size={14} className="mr-1 text-accent" />
-            <span>⚙ Configuración avanzada de audio</span>
-            {isFormatAdvancedOpen ? (
-              <ChevronUp size={14} className="ml-auto" />
-            ) : (
-              <ChevronDown size={14} className="ml-auto" />
-            )}
-          </button>
-
-          {isFormatAdvancedOpen && (
-            <div className="advanced-options-panel">
-              <span className="advanced-sublabel">Formatos certificados:</span>
-              <div className="advanced-list">
-                {[
-                  {
-                    id: "mp3_44100_128",
-                    label: "MP3 · 44.1 kHz · 128 kbps (Recomendado)",
-                  },
-                  {
-                    id: "mp3_44100_192",
-                    label: "MP3 · 44.1 kHz · 192 kbps (Alta fidelidad)",
-                  },
-                  {
-                    id: "pcm_44100",
-                    label: "PCM WAV · 44.1 kHz (Sin compresión)",
-                  },
-                  {
-                    id: "pcm_24000",
-                    label: "PCM WAV · 24.0 kHz (Baja latencia)",
-                  },
-                  {
-                    id: "mp3_22050_32",
-                    label: "MP3 · 22.05 kHz · 32 kbps (Compacto)",
-                  },
-                ].map((fmt) => (
-                  <button
-                    key={fmt.id}
-                    type="button"
-                    className={`advanced-item-btn ${selectedOutputFormat === fmt.id ? "active" : ""}`}
-                    onClick={() => onSelectOutputFormat(fmt.id)}
-                  >
-                    <span className="item-btn-name">{fmt.label}</span>
-                    {selectedOutputFormat === fmt.id && (
-                      <Check size={16} className="text-accent" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {isGenerating ? (
+            <button
+              type="button"
+              className="btn-cancel-generation"
+              onClick={onCancelGeneration}
+            >
+              <Square size={16} className="mr-2 fill-current" />
+              <span>Detener Generación</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={`btn-generate-main ${
+                !isAuthenticated || !isProviderConnected || isSelectedVoiceRestricted
+                  ? "btn-auth-locked"
+                  : ""
+              }`}
+              onClick={onGenerateAll}
+              disabled={
+                totalCount === 0 ||
+                pendingCount === 0 ||
+                !isAuthenticated ||
+                !isProviderConnected ||
+                isSelectedVoiceRestricted
+              }
+              data-testid="btn-generate-near-voice"
+              title={
+                isSelectedVoiceRestricted
+                  ? "Selecciona una voz disponible con tu plan para habilitar la generación."
+                  : !isAuthenticated
+                  ? "Conecta tu acceso para usar esta acción"
+                  : !isProviderConnected
+                  ? "Conecta ElevenLabs para generar narraciones."
+                  : undefined
+              }
+            >
+              <Volume2 size={18} className="mr-2" />
+              <span>
+                {isSelectedVoiceRestricted
+                  ? "SELECCIONA UNA VOZ DISPONIBLE"
+                  : !isAuthenticated
+                  ? "Conecta tu acceso para usar esta acción"
+                  : !isProviderConnected
+                  ? "Conecta ElevenLabs para generar narraciones."
+                  : `Generar Todas las Narraciones (${readyCount}/${totalCount})`}
+              </span>
+            </button>
           )}
         </div>
       </div>
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* SECTION B: VOICE LIBRARY DE ELEVENLABS (CATÁLOGO EXPLORACIÓN)*/}
+      {/* 3. CONFIGURACIÓN DE GENERACIÓN (COMPACT, UX 04 SEC 12 & 13)*/}
+      {/* ────────────────────────────────────────────────────────── */}
+      <div className="compact-generation-settings" data-testid="compact-generation-settings">
+        <div className="settings-summary-bar">
+          <div className="settings-summary-chips">
+            <span className="settings-chip chip-provider">
+              ElevenLabs {isProviderConnected ? "✓ Conectado" : "No conectado"} (Plan {displayTierName})
+            </span>
+            <span className="settings-chip-sep">·</span>
+            <span className="settings-chip chip-model">
+              {models.find((m) => m.modelId === selectedModelId)?.name || "Eleven Multilingual v2"}
+            </span>
+            <span className="settings-chip-sep">·</span>
+            <span className="settings-chip chip-format">
+              {selectedOutputFormat === "mp3_44100_128"
+                ? "MP3 · 44.1 kHz · 128 kbps"
+                : selectedOutputFormat}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="btn-toggle-settings-compact"
+            onClick={() => setIsSettingsExpanded(!isSettingsExpanded)}
+            data-testid="btn-toggle-settings"
+          >
+            <Settings size={14} className="mr-1.5 text-accent" />
+            <span>{isSettingsExpanded ? "Cerrar Configuración" : "Configuración"}</span>
+            {isSettingsExpanded ? (
+              <ChevronUp size={14} className="ml-1" />
+            ) : (
+              <ChevronDown size={14} className="ml-1" />
+            )}
+          </button>
+        </div>
+
+        {/* Expanded Advanced Controls (Only when isSettingsExpanded === true) */}
+        {isSettingsExpanded && (
+          <div className="settings-expanded-body animate-fade-in" data-testid="settings-expanded-body">
+            {/* BYOK Provider Connection */}
+            {onConnectProvider && onDisconnectProvider && (
+              <div className="mb-4">
+                <VoiceProviderSection
+                  isProviderConnected={isProviderConnected}
+                  onConnect={onConnectProvider}
+                  onDisconnect={onDisconnectProvider}
+                  isAuthenticated={isAuthenticated}
+                  providerTier={providerTier}
+                />
+              </div>
+            )}
+
+            {/* Model & Output format advanced selectors */}
+            <div className="tech-config-row">
+              {/* MODELO MAESTRO */}
+              <div className="tech-box">
+                <div className="tech-box-header">
+                  <span className="section-eyebrow">MODELO MAESTRO</span>
+                  <span className="tech-badge-rec">RECOMENDADO</span>
+                </div>
+                <div className="tech-main-choice">
+                  <h4 className="tech-choice-title">
+                    {models.find((m) => m.modelId === selectedModelId)?.name ||
+                      "Eleven Multilingual v2"}
+                  </h4>
+                  <p className="tech-choice-desc">
+                    {getModelDescription(
+                      selectedModelId,
+                      models.find((m) => m.modelId === selectedModelId)?.description
+                    )}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="tech-advanced-toggle"
+                  onClick={() => setIsModelAdvancedOpen(!isModelAdvancedOpen)}
+                >
+                  <Settings size={14} className="mr-1 text-accent" />
+                  <span>⚙ Modelos alternativos</span>
+                  {isModelAdvancedOpen ? (
+                    <ChevronUp size={14} className="ml-auto" />
+                  ) : (
+                    <ChevronDown size={14} className="ml-auto" />
+                  )}
+                </button>
+
+                {isModelAdvancedOpen && (
+                  <div className="advanced-options-panel">
+                    <span className="advanced-sublabel">Modelos disponibles:</span>
+                    <div className="advanced-list">
+                      {models.map((m) => (
+                        <button
+                          key={m.modelId}
+                          type="button"
+                          className={`advanced-item-btn ${selectedModelId === m.modelId ? "active" : ""}`}
+                          onClick={() => onSelectModel(m.modelId)}
+                        >
+                          <div>
+                            <span className="item-btn-name">{m.name}</span>
+                            <span className="item-btn-desc">
+                              {getModelDescription(m.modelId, m.description)}
+                            </span>
+                          </div>
+                          {selectedModelId === m.modelId && (
+                            <Check size={16} className="text-accent" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* FORMATO DE SALIDA */}
+              <div className="tech-box">
+                <div className="tech-box-header">
+                  <span className="section-eyebrow">FORMATO DE SALIDA</span>
+                  <span className="tech-badge-rec">RECOMENDADO</span>
+                </div>
+                <div className="tech-main-choice">
+                  <h4 className="tech-choice-title">
+                    {selectedOutputFormat === "mp3_44100_128"
+                      ? "MP3 · 44.1 kHz · 128 kbps"
+                      : selectedOutputFormat}
+                  </h4>
+                  <p className="tech-choice-desc">
+                    Balance óptimo de compresión y fidelidad sonora certificado para GhostAI.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="tech-advanced-toggle"
+                  onClick={() => setIsFormatAdvancedOpen(!isFormatAdvancedOpen)}
+                >
+                  <Settings size={14} className="mr-1 text-accent" />
+                  <span>⚙ Formatos alternativos</span>
+                  {isFormatAdvancedOpen ? (
+                    <ChevronUp size={14} className="ml-auto" />
+                  ) : (
+                    <ChevronDown size={14} className="ml-auto" />
+                  )}
+                </button>
+
+                {isFormatAdvancedOpen && (
+                  <div className="advanced-options-panel">
+                    <span className="advanced-sublabel">Formatos certificados:</span>
+                    <div className="advanced-list">
+                      {[
+                        {
+                          id: "mp3_44100_128",
+                          label: "MP3 · 44.1 kHz · 128 kbps (Recomendado)",
+                        },
+                        {
+                          id: "mp3_44100_192",
+                          label: "MP3 · 44.1 kHz · 192 kbps (Alta fidelidad)",
+                        },
+                        {
+                          id: "pcm_44100",
+                          label: "PCM WAV · 44.1 kHz (Sin compresión)",
+                        },
+                        {
+                          id: "pcm_24000",
+                          label: "PCM WAV · 24.0 kHz (Baja latencia)",
+                        },
+                        {
+                          id: "mp3_22050_32",
+                          label: "MP3 · 22.05 kHz · 32 kbps (Compacto)",
+                        },
+                      ].map((fmt) => (
+                        <button
+                          key={fmt.id}
+                          type="button"
+                          className={`advanced-item-btn ${selectedOutputFormat === fmt.id ? "active" : ""}`}
+                          onClick={() => onSelectOutputFormat(fmt.id)}
+                        >
+                          <span className="item-btn-name">{fmt.label}</span>
+                          {selectedOutputFormat === fmt.id && (
+                            <Check size={16} className="text-accent" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 4. CHILDREN (NARRATION TABLE & UTILITIES / RECOVERY VAULT)  */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {children}
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 5. SECTION B: VOICE LIBRARY DE ELEVENLABS (AT BOTTOM)      */}
       {/* ────────────────────────────────────────────────────────── */}
       <section
         ref={librarySectionRef}
-        className="voice-library-catalog-section"
+        className={`voice-library-catalog-section ${!isLibraryOpen ? "library-collapsed" : ""}`}
         data-testid="section-voice-library"
       >
-        <div className="catalog-header-row">
-          <div>
-            <span className="section-eyebrow">
-              <Sparkles size={14} className="text-accent inline mr-1" />
-              EXPLORAR CATÁLOGO GLOBAL
-            </span>
-            <h3 className="catalog-title">
-              VOICE LIBRARY DE ELEVENLABS
-              {totalCountCatalog > 0 && (
-                <span className="catalog-total-badge" data-testid="catalog-total-badge">
-                  {totalCountCatalog.toLocaleString()} voces en Voice Library
-                </span>
-              )}
-            </h3>
-            <p className="catalog-subtitle-text">
-              {isFree
-                ? "Explora voces adicionales. En el plan Free, las voces de Voice Library requieren un plan compatible para usarse mediante API en GhostAI."
-                : "Explora el catálogo global de voces comunitarias y profesionales de ElevenLabs."}
-            </p>
-          </div>
+        {!isLibraryOpen ? (
+          /* Collapsed View by default (UX 04 Section 17) */
+          <div className="catalog-collapsed-preview" data-testid="catalog-collapsed-preview">
+            <div className="collapsed-preview-info">
+              <span className="section-eyebrow">
+                <Sparkles size={14} className="text-accent inline mr-1" />
+                CATÁLOGO ADICIONAL
+              </span>
+              <h3 className="catalog-title">
+                VOICE LIBRARY DE ELEVENLABS
+                {totalCountCatalog > 0 && (
+                  <span className="catalog-total-badge" data-testid="catalog-total-badge">
+                    {totalCountCatalog.toLocaleString()} voces en biblioteca
+                  </span>
+                )}
+              </h3>
+              <p className="catalog-subtitle-text">
+                {isFree
+                  ? "Explora voces adicionales. En el plan Free, las voces de Voice Library requieren un plan compatible para usarse mediante API en GhostAI."
+                  : "Explora el catálogo global de voces comunitarias y profesionales de ElevenLabs."}
+              </p>
+            </div>
 
-          <div className="catalog-status-info flex items-center gap-2">
             <button
               type="button"
-              className="btn-toggle-library"
-              onClick={() => setIsLibraryOpen(!isLibraryOpen)}
+              className="btn-expand-library-cta"
+              onClick={() => {
+                setIsLibraryOpen(true);
+                setTimeout(() => librarySectionRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+              }}
               data-testid="toggle-voice-library"
             >
-              {isLibraryOpen ? (
-                <>
-                  <ChevronUp size={14} className="mr-1" /> OCULTAR VOICE LIBRARY
-                </>
-              ) : (
-                <>
-                  <Sparkles size={14} className="mr-1" /> EXPLORAR VOICE LIBRARY
-                </>
-              )}
+              <Sparkles size={16} className="mr-1.5" />
+              <span>{isFree ? "VER VOCES NO DISPONIBLES CON MI PLAN" : "EXPLORAR VOICE LIBRARY"}</span>
             </button>
           </div>
-        </div>
+        ) : (
+          /* Expanded View (UX 04 Section 19, 20, 21) */
+          <div className="voice-library-expanded-panel animate-fade-in" data-testid="voice-library-expanded-panel">
+            <div className="catalog-header-row">
+              <div>
+                <span className="section-eyebrow">
+                  <Sparkles size={14} className="text-accent inline mr-1" />
+                  EXPLORAR CATÁLOGO GLOBAL
+                </span>
+                <h3 className="catalog-title">
+                  VOICE LIBRARY DE ELEVENLABS
+                  {totalCountCatalog > 0 && (
+                    <span className="catalog-total-badge" data-testid="catalog-total-badge">
+                      {totalCountCatalog.toLocaleString()} voces en biblioteca
+                    </span>
+                  )}
+                </h3>
+                <p className="catalog-subtitle-text">
+                  {isFree
+                    ? "Explora voces adicionales. En el plan Free, las voces de Voice Library requieren un plan compatible para usarse mediante API en GhostAI."
+                    : "Explora el catálogo global de voces comunitarias y profesionales de ElevenLabs."}
+                </p>
+              </div>
 
-        {/* Collapsible Content */}
-        {isLibraryOpen && (
-          <div className="voice-library-expanded-panel animate-fade-in">
+              <div className="catalog-status-info flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-toggle-library"
+                  onClick={() => setIsLibraryOpen(false)}
+                  data-testid="toggle-voice-library"
+                >
+                  <ChevronUp size={14} className="mr-1" /> OCULTAR VOICE LIBRARY
+                </button>
+              </div>
+            </div>
+
             {/* Top Toolbar: Language Selector + Scoped Search + Refinements */}
             <div className="voice-library-top-bar">
-              {/* Language Selector */}
               <div ref={langDropdownRef} className="language-selector-wrap">
                 <label className="filter-field-label">
                   <Mic size={14} className="text-accent mr-1 inline" /> IDIOMA
@@ -1108,7 +1590,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 )}
               </div>
 
-              {/* Scoped Search Input for Voice Library */}
               <div className="search-bar-wrap">
                 <label className="filter-field-label">
                   <Search size={14} className="text-accent mr-1 inline" /> BUSCAR EN VOICE LIBRARY
@@ -1136,7 +1617,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 </div>
               </div>
 
-              {/* Secondary Filters Toggle */}
               <div className="filter-toggle-wrap">
                 <label className="filter-field-label">REFINAMIENTOS</label>
                 <button
@@ -1184,9 +1664,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                     className={`pill-filter-item ${selectedAccent === "all" ? "active" : ""}`}
                     onClick={() => setSelectedAccent("all")}
                   >
-                    Todos ({availableAccents.length})
+                    Todos ({availableLibraryAccents.length})
                   </button>
-                  {availableAccents.map((acc) => (
+                  {availableLibraryAccents.map((acc) => (
                     <button
                       key={acc}
                       type="button"
@@ -1267,9 +1747,8 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
               </div>
             )}
 
-            {/* Pestañas de Filtro de Voice Library (UX 03.3 Section 12) */}
+            {/* Pestañas de Filtro de Voice Library (UX 04 Section 19) */}
             <div className="availability-filter-tabs" data-testid="voice-plan-tabs">
-              {/* On Free: NO "DISPONIBLES (0)" tab. TODAS is default */}
               <button
                 type="button"
                 className={`tab-availability-btn ${libraryFilter === "all" ? "active" : ""}`}
@@ -1277,29 +1756,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 data-testid="tab-all-voices"
               >
                 TODAS ({libraryCounts.total})
-              </button>
-
-              {/* On Paid accounts: show available tab */}
-              {isPaid && (
-                <button
-                  type="button"
-                  className={`tab-availability-btn ${libraryFilter === "available" ? "active" : ""}`}
-                  onClick={() => setLibraryFilter("available")}
-                  data-testid="tab-available-voices"
-                >
-                  DISPONIBLES CON TU PLAN ({libraryCounts.available})
-                </button>
-              )}
-
-              <button
-                type="button"
-                className={`tab-availability-btn ${libraryFilter === "restricted" ? "active" : ""}`}
-                onClick={() => setLibraryFilter("restricted")}
-                data-testid="tab-restricted-voices"
-              >
-                {isPaid
-                  ? `REQUIEREN PLAN SUPERIOR (${libraryCounts.restricted})`
-                  : `REQUIEREN PLAN (${libraryCounts.restricted})`}
               </button>
 
               <button
@@ -1313,12 +1769,26 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
               <button
                 type="button"
-                className={`tab-availability-btn ${libraryFilter === "unknown" ? "active" : ""}`}
-                onClick={() => setLibraryFilter("unknown")}
-                data-testid="tab-unknown-voices"
+                className={`tab-availability-btn ${libraryFilter === "restricted" ? "active" : ""}`}
+                onClick={() => setLibraryFilter("restricted")}
+                data-testid="tab-restricted-voices"
               >
-                POR VERIFICAR ({libraryCounts.unknown})
+                {isPaid
+                  ? `REQUIEREN PLAN SUPERIOR (${libraryCounts.restricted})`
+                  : `REQUIEREN PLAN (${libraryCounts.restricted})`}
               </button>
+
+              {/* Only render unknown if count > 0 (UX 04 Section 19) */}
+              {libraryCounts.unknown > 0 && (
+                <button
+                  type="button"
+                  className={`tab-availability-btn ${libraryFilter === "unknown" ? "active" : ""}`}
+                  onClick={() => setLibraryFilter("unknown")}
+                  data-testid="tab-unknown-voices"
+                >
+                  POR VERIFICAR ({libraryCounts.unknown})
+                </button>
+              )}
             </div>
 
             {/* Error de Carga de Voice Library */}
@@ -1339,7 +1809,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
               </div>
             )}
 
-            {/* Skeletons al cargar inicialmente */}
+            {/* Skeletons al cargar */}
             {isLoadingCatalog && libraryVoices.length === 0 && !catalogError && (
               <div className="voice-library-grid">
                 {Array.from({ length: 8 }).map((_, idx) => (
@@ -1374,7 +1844,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
               </div>
             )}
 
-            {/* Grid de Voces de Voice Library */}
+            {/* Grid de Voces de Voice Library (Muted, UX 04 Section 20) */}
             {displayedLibraryVoices.length > 0 && (
               <div className="voice-library-grid">
                 {displayedLibraryVoices.map((voice) => {
@@ -1395,7 +1865,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                         isInCollection ? "in-collection" : ""
                       } ${isRestricted ? "is-restricted" : ""}`}
                     >
-                      {/* Card Header: Avatar, Name & Badges */}
                       <div className="card-top-header">
                         <div className="card-avatar-wrap">
                           <div className={`card-avatar ${isPlaying ? "playing" : ""}`}>
@@ -1421,7 +1890,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                             {isRestricted ? "🔒 REQUIERE PLAN" : getVoicePlanBadgeLabel(evaluatedVoice, providerTier)}
                           </span>
 
-                          {/* Edge Case: if selected voice is restricted on Free, do NOT show EN USO (UX 03.3 Section 16) */}
                           {isSelected && !isRestricted && (
                             <span className="badge-selected">
                               <Check size={12} className="mr-1" /> SELECCIONADA
@@ -1434,7 +1902,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                             </span>
                           )}
 
-                          {/* Collection badge with explicit tooltip (UX 03.3 Section 14, 19) */}
                           {isInCollection && !isSelected && (
                             <span
                               className="badge-in-collection"
@@ -1446,14 +1913,12 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                         </div>
                       </div>
 
-                      {/* Helper text */}
                       <div className="voice-card-plan-helper" data-testid={`helper-plan-${voice.voiceId}`}>
                         {isFree
                           ? "No disponible mediante la API con tu plan Free."
                           : getVoicePlanHelperText(evaluatedVoice, providerTier)}
                       </div>
 
-                      {/* Metadata Tags */}
                       <div className="card-meta-tags">
                         <span className="card-tag tag-lang">
                           {translateLanguage(voice.language || selectedLanguage).flag}{" "}
@@ -1494,7 +1959,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                         </div>
                       )}
 
-                      {/* Actions: Escuchar & Usar Voz (Locked on Free, UX 03.3 Section 14 & 15) */}
                       <div className="card-actions-row">
                         {voice.previewUrl ? (
                           <button
@@ -1517,7 +1981,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                           <span className="preview-absent-text">Sin muestra</span>
                         )}
 
-                        {/* On Free tier or restricted voice: action button is locked (UX 03.3 Section 15) */}
                         {isFree || isRestricted ? (
                           <button
                             type="button"
@@ -1558,7 +2021,6 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
               </div>
             )}
 
-            {/* Pagination Button: CARGAR MÁS DE VOICE LIBRARY (UX 03.3 Section 28) */}
             {hasMore && !isLoadingCatalog && (
               <div className="catalog-pagination-row">
                 <button
@@ -1590,99 +2052,42 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
       </section>
 
       {/* ────────────────────────────────────────────────────────── */}
-      {/* BARRA DE ACCIÓN Y GENERACIÓN BATCH                         */}
+      {/* 6. BARRA DE ACCIÓN INFERIOR / UTILIDADES                   */}
       {/* ────────────────────────────────────────────────────────── */}
-      <div className="studio-bottom-action-bar">
-        <div className="action-bar-left" />
-
-        <div className="action-bar-right">
-          {/* Warning if selected voice requires another plan (UX 03.3 Section 16) */}
-          {isSelectedVoiceRestricted && (
-            <div className="selected-voice-plan-warning" data-testid="selected-voice-plan-warning">
-              <AlertCircle size={15} className="mr-1.5 flex-shrink-0 text-amber" />
-              <span>
-                La voz seleccionada no está disponible con tu plan actual. Elige una voz disponible para continuar.
-              </span>
-            </div>
-          )}
-
-          {isGenerating ? (
-            <button
-              type="button"
-              className="btn-cancel-generation"
-              onClick={onCancelGeneration}
-            >
-              <Square size={16} className="mr-2 fill-current" />
-              <span>Detener Generación</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={`btn-generate-main ${
-                !isAuthenticated || !isProviderConnected || isSelectedVoiceRestricted
-                  ? "btn-auth-locked"
-                  : ""
-              }`}
-              onClick={onGenerateAll}
-              disabled={
-                totalCount === 0 ||
-                readyCount === totalCount ||
-                !isAuthenticated ||
-                !isProviderConnected ||
-                isSelectedVoiceRestricted
-              }
-              title={
-                isSelectedVoiceRestricted
-                  ? "Selecciona una voz disponible con tu plan para habilitar la generación."
-                  : !isAuthenticated
-                  ? "Conecta tu acceso para usar esta acción"
-                  : !isProviderConnected
-                  ? "Conecta ElevenLabs para generar narraciones."
-                  : undefined
-              }
-            >
-              <Volume2 size={18} className="mr-2" />
-              <span>
-                {isSelectedVoiceRestricted
-                  ? "SELECCIONA UNA VOZ DISPONIBLE"
-                  : !isAuthenticated
-                  ? "Conecta tu acceso para usar esta acción"
-                  : !isProviderConnected
-                  ? "Conecta ElevenLabs para generar narraciones."
-                  : `Generar Todas las Narraciones (${readyCount}/${totalCount})`}
-              </span>
-            </button>
-          )}
-
-          {hasErrors && !isGenerating && (
-            <button
-              type="button"
-              className="btn-retry-failed"
-              onClick={onRetryFailed}
-              title="Reintentar solo las escenas con error"
-            >
-              <RotateCcw size={16} className="mr-2" />
-              <span>Reintentar Fallidas</span>
-            </button>
-          )}
-
-          {hasReadyItems && (
-            <div className="zip-download-actions flex items-center gap-2">
+      {(hasErrors || hasReadyItems) && (
+        <div className="studio-bottom-action-bar">
+          <div className="action-bar-left" />
+          <div className="action-bar-right">
+            {hasErrors && !isGenerating && (
               <button
                 type="button"
-                className="btn-export-zip-main"
-                onClick={onExportZip}
-                disabled={isGenerating}
-                data-testid="btn-export-zip"
-                title="Descargar paquete ZIP en ventana segura sin restricciones de sandbox"
+                className="btn-retry-failed"
+                onClick={onRetryFailed}
+                title="Reintentar solo las escenas con error"
               >
-                <PackageCheck size={18} className="mr-2 text-emerald" />
-                <span>Descargar ZIP ({readyCount})</span>
+                <RotateCcw size={16} className="mr-2" />
+                <span>Reintentar Fallidas</span>
               </button>
-            </div>
-          )}
+            )}
+
+            {hasReadyItems && (
+              <div className="zip-download-actions flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-export-zip-main"
+                  onClick={onExportZip}
+                  disabled={isGenerating}
+                  data-testid="btn-export-zip"
+                  title="Descargar paquete ZIP en ventana segura sin restricciones de sandbox"
+                >
+                  <PackageCheck size={18} className="mr-2 text-emerald" />
+                  <span>Descargar ZIP ({readyCount})</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

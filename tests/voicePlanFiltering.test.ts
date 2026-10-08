@@ -181,13 +181,14 @@ describe("UX 02: Voice Plan Filtering & Availability Classification", () => {
           isAuthenticated: true,
           isProviderConnected: true,
           providerTier: "free",
+          initialLibraryExpanded: true,
         })
       );
 
       expect(htmlFree).toContain("TODAS");
       expect(htmlFree).toContain("REQUIEREN PLAN");
       expect(htmlFree).toContain("EN TU COLECCIÓN");
-      expect(htmlFree).toContain("DISPONIBLE EN FREE");
+      expect(htmlFree).toContain("DISPONIBLE");
     });
 
     it("adapts filter tabs when provider tier is paid", () => {
@@ -215,11 +216,12 @@ describe("UX 02: Voice Plan Filtering & Availability Classification", () => {
           isAuthenticated: true,
           isProviderConnected: true,
           providerTier: "pro",
+          initialLibraryExpanded: true,
         })
       );
 
       expect(htmlPaid).toContain("TODAS");
-      expect(htmlPaid).toContain("DISPONIBLES CON TU PLAN");
+      expect(htmlPaid).toContain("VOCES DISPONIBLES CON TU PLAN");
       expect(htmlPaid).toContain("REQUIEREN PLAN SUPERIOR");
     });
   });

@@ -83,6 +83,7 @@ describe("UX 03.3: Voice Experience Redesign — Usable Voices vs Voice Library 
           isAuthenticated: true,
           isProviderConnected: true,
           providerTier: "free",
+          initialLibraryExpanded: true,
         })
       );
 
@@ -92,8 +93,8 @@ describe("UX 03.3: Voice Experience Redesign — Usable Voices vs Voice Library 
       expect(html).toContain('data-testid="usable-voice-card-def-voice-1"');
       expect(html).toContain('data-testid="usable-voice-card-def-voice-2"');
       expect(html).not.toContain('data-testid="usable-voice-card-shared-voice-1"');
-      expect(html).toContain("✓ DISPONIBLE EN FREE");
-      expect(html).toContain("EN USO");
+      expect(html).toContain("✓ DISPONIBLE");
+      expect(html).toContain("VOZ ACTUAL");
 
       expect(html).toContain('data-testid="section-voice-library"');
       expect(html).toContain("VOICE LIBRARY DE ELEVENLABS");
@@ -101,7 +102,6 @@ describe("UX 03.3: Voice Experience Redesign — Usable Voices vs Voice Library 
       expect(html).toContain("TODAS");
       expect(html).toContain("REQUIEREN PLAN");
       expect(html).toContain("EN TU COLECCIÓN");
-      expect(html).toContain("POR VERIFICAR");
       expect(html).not.toContain('data-testid="tab-available-voices"');
     });
   });
@@ -210,6 +210,7 @@ describe("UX 03.3: Voice Experience Redesign — Usable Voices vs Voice Library 
           isAuthenticated: true,
           isProviderConnected: true,
           providerTier: "free",
+          initialLibraryExpanded: true,
         })
       );
 

@@ -2,10 +2,11 @@
  * @file src/components/RecoveryVaultSection.tsx
  * Discrete UI section displaying temporary recovery sessions.
  * Allows instant rehydration without ElevenLabs re-synthesis.
+ * UX 04: Compact collapsible block inside UTILIDADES.
  */
 
 import React, { useState, useEffect } from "react";
-import { Archive, RefreshCw, Trash2, RotateCcw } from "lucide-react";
+import { Archive, RefreshCw, Trash2, RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
 import {
   fetchRecoverySessions,
   recoverSession,
@@ -48,6 +49,7 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
   const [sessions, setSessions] = useState<RecoverySessionSummary[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState<boolean>(!hasActiveProject);
 
   const loadSessions = async () => {
     if (!isAuthenticated) return;
@@ -159,70 +161,99 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
   };
 
   return (
-    <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "10px", padding: "1.25rem", margin: "1rem 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <Archive size={18} className="text-cyan-400" />
-          <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc" }}>
-            RECUPERACIÓN TEMPORAL
-          </h3>
-        </div>
-        <button
-          onClick={loadSessions}
-          disabled={loading}
-          style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem" }}
-        >
-          <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Actualizar
-        </button>
-      </div>
-
-      <p style={{ margin: "0 0 1rem 0", fontSize: "0.75rem", color: "#94a3b8", lineHeight: "1.4" }}>
-        GhostAI conserva temporalmente tus narraciones para que puedas restaurarlas sin volver a generarlas.
-      </p>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "0.75rem" }}>
-        {sessions.map((session) => (
-          <div
-            key={session.id}
-            style={{ background: "#111827", border: "1px solid #1f2937", borderRadius: "8px", padding: "0.85rem", display: "flex", flexDirection: "column", justifyContent: "space-between" }}
-          >
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.4rem" }}>
-                <span style={{ fontWeight: "600", fontSize: "0.85rem", color: "#f8fafc", wordBreak: "break-word" }}>
-                  {session.projectTitle || "Proyecto sin título"}
-                </span>
-                <span style={{ fontSize: "0.7rem", padding: "0.15rem 0.4rem", borderRadius: "4px", background: session.readyCount === session.itemCount ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)", color: session.readyCount === session.itemCount ? "#34d399" : "#fbbf24", fontWeight: "bold" }}>
-                  {session.readyCount}/{session.itemCount} AUDIOS
-                </span>
-              </div>
-
-              <div style={{ fontSize: "0.75rem", color: "#64748b", display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.75rem" }}>
-                <span>Creado {formatRelativeTime(session.createdAt)}</span>
-                <span style={{ color: "#38bdf8" }}>{formatExpiryTime(session.expiresAt)}</span>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <button
-                onClick={() => handleRestore(session)}
-                disabled={restoringSessionId === session.id}
-                style={{ flex: 1, padding: "0.4rem 0.6rem", background: "#0284c7", border: "none", borderRadius: "4px", color: "#ffffff", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem" }}
-              >
-                {restoringSessionId === session.id ? <RefreshCw size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-                <span>{restoringSessionId === session.id ? "Restaurando..." : "RESTAURAR"}</span>
-              </button>
-
-              <button
-                onClick={() => handleDelete(session.id)}
-                style={{ padding: "0.4rem 0.6rem", background: "rgba(244, 63, 94, 0.1)", border: "1px solid rgba(244, 63, 94, 0.3)", borderRadius: "4px", color: "#fda4af", fontSize: "0.75rem", cursor: "pointer" }}
-                title="Eliminar"
-              >
-                <Trash2 size={13} />
-              </button>
-            </div>
+    <div className="utilities-vault-card" data-testid="utilities-vault-card">
+      <div className="utilities-vault-bar">
+        <div className="utilities-bar-left">
+          <div className="utilities-tag">
+            <Archive size={15} className="text-cyan-400 mr-1.5" />
+            <span className="utilities-eyebrow">UTILIDADES</span>
           </div>
-        ))}
+          <span className="utilities-sep">·</span>
+          <span className="utilities-title">RECUPERACIÓN TEMPORAL</span>
+          <span className="utilities-badge" data-testid="recovery-projects-count">
+            {sessions.length} {sessions.length === 1 ? "proyecto disponible" : "proyectos disponibles"}
+          </span>
+        </div>
+
+        <div className="utilities-bar-right">
+          <button
+            type="button"
+            className="btn-toggle-vault"
+            onClick={() => setIsExpanded(!isExpanded)}
+            data-testid="btn-toggle-recovery"
+          >
+            <span>{isExpanded ? "OCULTAR RECUPERACIÓN" : "VER RECUPERACIÓN"}</span>
+            {isExpanded ? <ChevronUp size={14} className="ml-1" /> : <ChevronDown size={14} className="ml-1" />}
+          </button>
+        </div>
       </div>
+
+      {isExpanded && (
+        <div className="utilities-vault-expanded animate-fade-in">
+          <div className="utilities-vault-subbar">
+            <p className="utilities-desc">
+              GhostAI conserva temporalmente tus narraciones para que puedas restaurarlas sin volver a generarlas.
+            </p>
+            <button
+              type="button"
+              onClick={loadSessions}
+              disabled={loading}
+              className="btn-refresh-vault"
+            >
+              <RefreshCw size={13} className={loading ? "animate-spin mr-1" : "mr-1"} /> Actualizar
+            </button>
+          </div>
+
+          <div className="utilities-sessions-grid">
+            {sessions.map((session) => (
+              <div key={session.id} className="recovery-session-item">
+                <div className="session-item-header">
+                  <span className="session-project-title" title={session.projectTitle || "Proyecto sin título"}>
+                    {session.projectTitle || "Proyecto sin título"}
+                  </span>
+                  <span
+                    className={`session-audios-badge ${
+                      session.readyCount === session.itemCount ? "is-complete" : "is-partial"
+                    }`}
+                  >
+                    {session.readyCount}/{session.itemCount} AUDIOS
+                  </span>
+                </div>
+
+                <div className="session-item-meta">
+                  <span>Creado {formatRelativeTime(session.createdAt)}</span>
+                  <span className="session-expiry">{formatExpiryTime(session.expiresAt)}</span>
+                </div>
+
+                <div className="session-item-actions">
+                  <button
+                    type="button"
+                    onClick={() => handleRestore(session)}
+                    disabled={restoringSessionId === session.id}
+                    className="btn-restore-session"
+                  >
+                    {restoringSessionId === session.id ? (
+                      <RefreshCw size={12} className="animate-spin mr-1" />
+                    ) : (
+                      <RotateCcw size={12} className="mr-1" />
+                    )}
+                    <span>{restoringSessionId === session.id ? "Restaurando..." : "RESTAURAR"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(session.id)}
+                    className="btn-delete-session"
+                    title="Eliminar"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

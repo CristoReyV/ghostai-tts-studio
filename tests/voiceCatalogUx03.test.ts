@@ -278,6 +278,7 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
           isAuthenticated: true,
           isProviderConnected: true,
           providerTier: "free",
+          initialLibraryExpanded: true,
         })
       );
 
@@ -285,7 +286,6 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       expect(html).toContain('data-testid="tab-all-voices"');
       expect(html).toContain('data-testid="tab-restricted-voices"');
       expect(html).toContain('data-testid="tab-in-collection-voices"');
-      expect(html).toContain('data-testid="tab-unknown-voices"');
 
       // Default active tab on Free is TODAS (UX 03.3 Section 12)
       expect(html).toMatch(/tab-availability-btn active"[^>]*data-testid="tab-all-voices"/);

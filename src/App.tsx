@@ -1056,7 +1056,7 @@ export const App: React.FC = () => {
               <ProjectOverview items={items} />
             </section>
 
-            {/* Batch Action Controls */}
+            {/* Batch Action Controls with Nested Children (UX 04: Hierarchy & Priority) */}
             <section className="section-controls">
               <BatchControls
                 voices={voices}
@@ -1092,47 +1092,47 @@ export const App: React.FC = () => {
                 onDisconnectProvider={handleDisconnectProvider}
                 isEmbedded={isEmbedded}
                 onOpenTopLevel={handleOpenTopLevel}
-              />
+              >
+                {/* 4. Narration Table — Primary workflow placed above Voice Library and Recovery (UX 04 Sec 2 & 14) */}
+                <section className="section-table" style={{ margin: "1.5rem 0" }}>
+                  <NarrationTable
+                    items={items}
+                    voices={voices}
+                    models={models}
+                    isGeneratingAny={isGenerating}
+                    providerTier={providerTier}
+                    onGenerateSingle={handleGenerateSingle}
+                    onUpdateItemVoice={handleUpdateItemVoice}
+                    onUpdateItemModel={handleUpdateItemModel}
+                    onUpdateDuration={handleUpdateDuration}
+                  />
+                </section>
 
-              {/* ZIP Verification CTA & Feedback Card */}
-              <ZipVerificationCard
-                status={zipStatus}
-                currentSessionId={currentSessionId}
-                expectedItemCount={readyItemsCount}
-                expectedItems={expectedHashes}
-                onStatusChange={setZipStatus}
-                onRetryDownload={handleExportZip}
-                onNotification={showNotification}
-              />
-            </section>
+                {/* 5. Temporary Recovery Vault Section — Secondary utilities (UX 04 Sec 2 & 15) */}
+                <section className="section-project-recovery" style={{ margin: "1rem 0" }}>
+                  <RecoveryVaultSection
+                    isAuthenticated={isAuthenticated}
+                    hasActiveProject={true}
+                    onRestoreProject={(restoredProject, restoredItems) => {
+                      setCurrentProject(restoredProject);
+                      setItems(restoredItems);
+                      setZipStatus("not_prepared");
+                    }}
+                    onNotification={showNotification}
+                  />
+                </section>
 
-            {/* Temporary Recovery Vault Section */}
-            <section className="section-project-recovery" style={{ maxWidth: "1200px", margin: "0 auto", padding: "0 1.5rem" }}>
-              <RecoveryVaultSection
-                isAuthenticated={isAuthenticated}
-                hasActiveProject={true}
-                onRestoreProject={(restoredProject, restoredItems) => {
-                  setCurrentProject(restoredProject);
-                  setItems(restoredItems);
-                  setZipStatus("not_prepared");
-                }}
-                onNotification={showNotification}
-              />
-            </section>
-
-            {/* Narration Table */}
-            <section className="section-table">
-              <NarrationTable
-                items={items}
-                voices={voices}
-                models={models}
-                isGeneratingAny={isGenerating}
-                providerTier={providerTier}
-                onGenerateSingle={handleGenerateSingle}
-                onUpdateItemVoice={handleUpdateItemVoice}
-                onUpdateItemModel={handleUpdateItemModel}
-                onUpdateDuration={handleUpdateDuration}
-              />
+                {/* ZIP Verification CTA & Feedback Card */}
+                <ZipVerificationCard
+                  status={zipStatus}
+                  currentSessionId={currentSessionId}
+                  expectedItemCount={readyItemsCount}
+                  expectedItems={expectedHashes}
+                  onStatusChange={setZipStatus}
+                  onRetryDownload={handleExportZip}
+                  onNotification={showNotification}
+                />
+              </BatchControls>
             </section>
           </>
         )}
