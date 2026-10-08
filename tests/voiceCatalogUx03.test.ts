@@ -281,14 +281,14 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
         })
       );
 
-      // Filter tabs rendered
-      expect(html).toContain('data-testid="tab-available-voices"');
+      // Filter tabs rendered for Voice Library on Free (UX 03.3 Section 12)
       expect(html).toContain('data-testid="tab-all-voices"');
       expect(html).toContain('data-testid="tab-restricted-voices"');
+      expect(html).toContain('data-testid="tab-in-collection-voices"');
       expect(html).toContain('data-testid="tab-unknown-voices"');
 
-      // Default active tab is available
-      expect(html).toMatch(/tab-availability-btn active"[^>]*data-testid="tab-available-voices"/);
+      // Default active tab on Free is TODAS (UX 03.3 Section 12)
+      expect(html).toMatch(/tab-availability-btn active"[^>]*data-testid="tab-all-voices"/);
 
       // Account status displays neutral ElevenLabs Free
       expect(html).toContain('data-testid="catalog-plan-status"');
@@ -333,7 +333,7 @@ describe("UX 03: Voice Catalog Filtering & Free-Plan Usability", () => {
       );
 
       // Main generate button is blocked and disabled
-      expect(html).toContain("PLAN REQUERIDO · VOZ INCOMPATIBLE");
+      expect(html).toContain("SELECCIONA UNA VOZ DISPONIBLE");
       expect(html).toContain("disabled");
       expect(html).toContain("btn-auth-locked");
     });

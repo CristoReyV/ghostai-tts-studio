@@ -60,6 +60,7 @@ export interface GatewayVoice {
   name: string;
   category: string | null;
   labels: Record<string, string>;
+  description?: string | null;
   previewUrl: string | null;
   availableForTiers?: string[] | null;
   isOwner?: boolean | null;

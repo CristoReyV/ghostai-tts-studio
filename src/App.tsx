@@ -90,6 +90,8 @@ export const App: React.FC = () => {
   // BYOK ElevenLabs connection state (session-only via HttpOnly cookie)
   const [isProviderConnected, setIsProviderConnected] = useState<boolean>(false);
   const [providerTier, setProviderTier] = useState<string | null>(null);
+  const [isLoadingVoices, setIsLoadingVoices] = useState<boolean>(true);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
 
   // Gateway states
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealth | null>(null);
@@ -172,12 +174,14 @@ export const App: React.FC = () => {
   // 1. Initialise Gateway Connection and fetch available voices & models
   const loadGatewayData = useCallback(async () => {
     setCheckingHealth(true);
+    setIsLoadingVoices(true);
+    setVoicesError(null);
     try {
       const health = await checkGatewayHealth();
       setGatewayHealth(health);
 
       const [loadedVoices, loadedModels] = await Promise.all([
-        fetchGatewayVoices().catch(() => []),
+        fetchGatewayVoices(),
         fetchGatewayModels().catch(() => []),
       ]);
 
@@ -193,6 +197,7 @@ export const App: React.FC = () => {
       }
     } catch (err) {
       console.warn("Error conectando al Gateway:", err);
+      setVoicesError("No pudimos comprobar tus voces con ElevenLabs.");
       setGatewayHealth({
         ok: false,
         service: "ghostai-tts-gateway",
@@ -202,6 +207,7 @@ export const App: React.FC = () => {
       });
     } finally {
       setCheckingHealth(false);
+      setIsLoadingVoices(false);
     }
   }, [selectedVoiceId, selectedLanguage]);
 
@@ -1078,6 +1084,10 @@ export const App: React.FC = () => {
                 totalCount={items.length}
                 isAuthenticated={isAuthenticated}
                 isProviderConnected={isProviderConnected}
+                providerTier={providerTier}
+                isLoadingVoices={isLoadingVoices}
+                voicesError={voicesError}
+                onRetryVoices={loadGatewayData}
                 onConnectProvider={handleConnectProvider}
                 onDisconnectProvider={handleDisconnectProvider}
                 isEmbedded={isEmbedded}
@@ -1117,6 +1127,7 @@ export const App: React.FC = () => {
                 voices={voices}
                 models={models}
                 isGeneratingAny={isGenerating}
+                providerTier={providerTier}
                 onGenerateSingle={handleGenerateSingle}
                 onUpdateItemVoice={handleUpdateItemVoice}
                 onUpdateItemModel={handleUpdateItemModel}

@@ -1034,12 +1034,13 @@ export function formatVoiceAvailabilityError(statusCode?: number, rawError?: str
 }
 
 
-export type VoiceCatalogFilter = "available" | "all" | "restricted" | "unknown";
+export type VoiceCatalogFilter = "available" | "all" | "restricted" | "in_collection" | "unknown";
 
 export interface VoiceCatalogCounts {
   available: number;
   restricted: number;
   unknown: number;
+  inCollection: number;
   total: number;
 }
 
@@ -1049,6 +1050,7 @@ export interface VoiceCatalogCounts {
  */
 export function computeVoiceCatalogCounts(
   voices: Array<{
+    voiceId?: string;
     category?: string | null;
     voiceOrigin?: VoiceOrigin;
     libraryAllowsFreeUsers?: boolean | null;
@@ -1057,12 +1059,16 @@ export function computeVoiceCatalogCounts(
     isOwner?: boolean | null;
     availableForTiers?: string[] | null;
     labels?: Record<string, string>;
+    inCollection?: boolean;
+    isBookmarked?: boolean;
   }>,
-  tier?: string | null
+  tier?: string | null,
+  accountVoiceIds?: Set<string>
 ): VoiceCatalogCounts {
   let available = 0;
   let restricted = 0;
   let unknown = 0;
+  let inCollection = 0;
   for (const v of voices) {
     const check = checkVoicePlanAvailability(v, tier);
     if (check.availability === "available") {
@@ -1072,25 +1078,38 @@ export function computeVoiceCatalogCounts(
     } else {
       unknown++;
     }
+
+    const isInColl = Boolean(
+      v.inCollection ||
+      v.isBookmarked ||
+      v.voiceOrigin === "library_copy" ||
+      (v.voiceId && accountVoiceIds?.has(v.voiceId))
+    );
+    if (isInColl) {
+      inCollection++;
+    }
   }
   return {
     available,
     restricted,
     unknown,
+    inCollection,
     total: voices.length,
   };
 }
 
 /**
- * Filters and sorts catalog voices based on active plan availability filter and search query (UX 03 Sections 2, 6, 9).
- * - "available": shows only available voices (default for Free accounts)
+ * Filters and sorts catalog voices based on active plan availability filter and search query (UX 03 Sections 2, 6, 9, UX 03.3).
+ * - "available": shows only available voices
  * - "restricted": shows only restricted voices
+ * - "in_collection": shows voices saved in account collection
  * - "unknown": shows only voices with unverified plan status
  * - "all": shows all voices sorted (available first, unknown second, restricted last)
  * - Search: operates strictly inside the active filter.
  */
 export function filterAndSortVoiceCatalog<
   T extends {
+    voiceId?: string;
     name: string;
     category?: string | null;
     voiceOrigin?: VoiceOrigin;
@@ -1102,12 +1121,15 @@ export function filterAndSortVoiceCatalog<
     labels?: Record<string, string>;
     description?: string | null;
     useCase?: string | null;
+    inCollection?: boolean;
+    isBookmarked?: boolean;
   }
 >(
   voices: T[],
   filter: VoiceCatalogFilter,
   tier?: string | null,
-  searchQuery?: string
+  searchQuery?: string,
+  accountVoiceIds?: Set<string>
 ): T[] {
   let list = voices;
 
@@ -1119,6 +1141,15 @@ export function filterAndSortVoiceCatalog<
   } else if (filter === "restricted") {
     list = list.filter(
       (v) => checkVoicePlanAvailability(v, tier).availability === "restricted"
+    );
+  } else if (filter === "in_collection") {
+    list = list.filter((v) =>
+      Boolean(
+        v.inCollection ||
+        v.isBookmarked ||
+        v.voiceOrigin === "library_copy" ||
+        (v.voiceId && accountVoiceIds?.has(v.voiceId))
+      )
     );
   } else if (filter === "unknown") {
     list = list.filter(

@@ -185,8 +185,9 @@ describe("UX 02: Voice Plan Filtering & Availability Classification", () => {
       );
 
       expect(htmlFree).toContain("TODAS");
-      expect(htmlFree).toContain("DISPONIBLES GRATIS");
       expect(htmlFree).toContain("REQUIEREN PLAN");
+      expect(htmlFree).toContain("EN TU COLECCIÓN");
+      expect(htmlFree).toContain("DISPONIBLE EN FREE");
     });
 
     it("adapts filter tabs when provider tier is paid", () => {

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { GatewayModel, GatewayVoice, StudioNarrationItem } from "../types/tts";
 import { AudioPlayer } from "./AudioPlayer";
+import { checkVoicePlanAvailability } from "../services/voiceLibrary";
 
 interface NarrationRowProps {
   item: StudioNarrationItem;
@@ -24,6 +25,7 @@ interface NarrationRowProps {
   voices: GatewayVoice[];
   models: GatewayModel[];
   isGeneratingAny: boolean;
+  providerTier?: string | null;
   onGenerateSingle: (id: string) => void;
   onUpdateItemVoice: (id: string, voiceId: string) => void;
   onUpdateItemModel: (id: string, modelId: string) => void;
@@ -36,6 +38,7 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
   voices,
   models,
   isGeneratingAny,
+  providerTier,
   onGenerateSingle,
   onUpdateItemVoice,
   onUpdateItemModel,
@@ -44,6 +47,20 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const isCurrentGenerating = item.status === "GENERATING";
+
+  const { usableVoices, restrictedVoices } = React.useMemo(() => {
+    const usable: GatewayVoice[] = [];
+    const restricted: GatewayVoice[] = [];
+    for (const v of voices) {
+      const planCheck = checkVoicePlanAvailability(v, providerTier);
+      if (planCheck.availability === "available") {
+        usable.push(v);
+      } else {
+        restricted.push(v);
+      }
+    }
+    return { usableVoices: usable, restrictedVoices: restricted };
+  }, [voices, providerTier]);
 
   const renderStatusBadge = () => {
     switch (item.status) {
@@ -156,15 +173,26 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
             title="Voz asignada a este elemento"
           >
             {item.voiceId && !voices.some((v) => v.voiceId === item.voiceId) && (
-              <option key={item.voiceId} value={item.voiceId}>
-                {item.voiceId} (original)
+              <option key={item.voiceId} value={item.voiceId} disabled>
+                {item.voiceId} (original no disponible)
               </option>
             )}
-            {voices.map((v) => (
-              <option key={v.voiceId} value={v.voiceId}>
-                {v.name}
-              </option>
-            ))}
+            <optgroup label="DISPONIBLES CON TU PLAN">
+              {usableVoices.map((v) => (
+                <option key={v.voiceId} value={v.voiceId}>
+                  {v.name}
+                </option>
+              ))}
+            </optgroup>
+            {restrictedVoices.length > 0 && (
+              <optgroup label="REQUIEREN PLAN">
+                {restrictedVoices.map((v) => (
+                  <option key={v.voiceId} value={v.voiceId} disabled>
+                    {v.name} (Requiere plan)
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
 
