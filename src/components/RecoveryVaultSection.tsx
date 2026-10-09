@@ -121,6 +121,7 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
           error: audioBlob ? undefined : "Audio no disponible en el vault",
           audioBlob,
           audioUrl,
+          alignment: item.alignment || undefined,
         });
       }
 

@@ -229,6 +229,37 @@ export async function verifyGhostAiTtsZip(
       };
     }
 
+    // Optional alignment validation (Captions 01A)
+    if (item.alignment !== undefined && item.alignment !== null) {
+      const align = item.alignment;
+      if (!align || typeof align !== "object" || !Array.isArray(align.words)) {
+        console.warn(`[zipVerifier] Advertencia: alignment malformado en narración '${narrationId}'.`);
+      } else {
+        let alignValid = true;
+        let lastStart = -1;
+        for (const w of align.words) {
+          if (
+            !w ||
+            typeof w.text !== "string" ||
+            typeof w.start !== "number" ||
+            typeof w.end !== "number" ||
+            !Number.isFinite(w.start) ||
+            !Number.isFinite(w.end) ||
+            w.end < w.start ||
+            w.start < 0 ||
+            w.start < lastStart
+          ) {
+            alignValid = false;
+            break;
+          }
+          lastStart = w.start;
+        }
+        if (!alignValid) {
+          console.warn(`[zipVerifier] Advertencia: marcas temporales o palabras inválidas en alignment de '${narrationId}'.`);
+        }
+      }
+    }
+
     // Check cryptographic hash against expected session if present
     const expected = expectedItemsMap.get(narrationId);
     if (expected?.sha256) {

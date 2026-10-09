@@ -4,6 +4,7 @@
  */
 
 import type {
+  NarrationAlignment,
   GatewayHealth,
   GatewayModel,
   GatewayVoice,
@@ -154,6 +155,7 @@ export interface GenerateAudioParams {
   narrationId?: string;
   sceneId?: string;
   sceneIndex?: number;
+  withTimestamps?: boolean;
 }
 
 export interface GenerateAudioResult {
@@ -164,6 +166,7 @@ export interface GenerateAudioResult {
   sessionId?: string | null;
   sha256?: string | null;
   recoveryWarning?: string | null;
+  alignment?: NarrationAlignment | null;
 }
 
 export class TtsGatewayError extends Error {
@@ -269,6 +272,7 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     text: params.text,
     modelId: params.modelId || "eleven_multilingual_v2",
     outputFormat: params.outputFormat || "mp3_44100_128",
+    withTimestamps: params.withTimestamps !== false,
     ...(params.languageCode ? { languageCode: params.languageCode } : {}),
     ...(params.voiceSettings ? { voiceSettings: params.voiceSettings } : {}),
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
@@ -328,15 +332,40 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
     throw new TtsGatewayError(errMsg, errCode, res.status, bodyReqId || requestId);
   }
 
-  const blob = await res.blob();
+  const contentType = res.headers.get("Content-Type") || "";
+  let blob: Blob;
+  let alignment: NarrationAlignment | null = null;
+  let resSha256 = sha256;
+  let resSessionId = sessionId;
+
+  if (contentType.includes("application/json")) {
+    const data = await res.json();
+    if (data?.audioBase64) {
+      const binaryStr = atob(data.audioBase64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      blob = new Blob([bytes], { type: "audio/mpeg" });
+    } else {
+      blob = new Blob([], { type: "audio/mpeg" });
+    }
+    alignment = data?.alignment || null;
+    if (data?.sha256) resSha256 = data.sha256;
+    if (data?.sessionId) resSessionId = data.sessionId;
+  } else {
+    blob = await res.blob();
+  }
+
   return {
     blob,
     requestId,
     outputFormat,
     durationMs,
-    sessionId,
-    sha256,
+    sessionId: resSessionId,
+    sha256: resSha256,
     recoveryWarning,
+    alignment,
   };
 }
 

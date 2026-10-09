@@ -3,6 +3,16 @@
  * Type definitions for GhostAI TTS Studio
  */
 
+export interface WordAlignment {
+  text: string;
+  start: number;
+  end: number;
+}
+
+export interface NarrationAlignment {
+  words: WordAlignment[];
+}
+
 export interface GhostAiVoiceSettings {
   stability?: number;
   similarityBoost?: number;
@@ -23,6 +33,7 @@ export interface GhostAiTtsItem {
   speed?: number;
   voiceSettings?: GhostAiVoiceSettings;
   outputFormat?: string;
+  alignment?: NarrationAlignment | null;
   // Preserves any additional custom metadata
   [key: string]: unknown;
 }
@@ -88,6 +99,7 @@ export interface OutputPackageItem {
   modelId: string;
   duration: number;
   requestId: string;
+  alignment?: NarrationAlignment | null;
   [key: string]: unknown;
 }
 
@@ -213,6 +225,7 @@ export interface RecoveryItem {
   outputFormat?: string | null;
   durationSeconds?: number | null;
   text?: string | null;
+  alignment?: NarrationAlignment | null;
 }
 
 // ── Control Plane 01: ZIP Verifier ─────────────────────────────────────────

@@ -642,6 +642,7 @@ export const App: React.FC = () => {
                   status: "READY",
                   audioBlob: genResult.blob,
                   audioUrl: newAudioUrl,
+                  alignment: genResult.alignment || undefined,
                   requestId: genResult.requestId,
                   responseBytes: genResult.blob.size,
                   error: undefined,

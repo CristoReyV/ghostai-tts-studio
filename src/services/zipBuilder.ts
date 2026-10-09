@@ -5,7 +5,7 @@
  */
 
 import JSZip from "jszip";
-import type { GhostAiTtsProject, OutputPackageManifest, StudioNarrationItem } from "../types/tts";
+import type { GhostAiTtsProject, OutputPackageManifest, OutputPackageItem, StudioNarrationItem } from "../types/tts";
 import { getGatewayBaseUrl } from "./gateway";
 
 export interface BuildZipOptions {
@@ -66,10 +66,11 @@ export async function buildGhostAiTtsPackage(options: BuildZipOptions): Promise<
       duration,
       requestId,
       narrationId,
+      alignment,
       ...originalProps
     } = item;
 
-    return {
+    const manifestItem: OutputPackageItem = {
       ...originalProps,
       id: item.id,
       sceneId: item.sceneId,
@@ -80,6 +81,43 @@ export async function buildGhostAiTtsPackage(options: BuildZipOptions): Promise<
       duration: duration || 0,
       requestId: requestId || "",
     };
+
+    if (alignment && typeof alignment === "object" && Array.isArray(alignment.words)) {
+      const validWords = alignment.words.filter(
+        (w) =>
+          w &&
+          typeof w.text === "string" &&
+          w.text.length > 0 &&
+          typeof w.start === "number" &&
+          Number.isFinite(w.start) &&
+          w.start >= 0 &&
+          typeof w.end === "number" &&
+          Number.isFinite(w.end) &&
+          w.end >= w.start
+      );
+
+      let isMonotonic = true;
+      for (let i = 1; i < validWords.length; i++) {
+        if (validWords[i].start < validWords[i - 1].start) {
+          isMonotonic = false;
+          break;
+        }
+      }
+
+      if (validWords.length > 0 && isMonotonic && validWords.length === alignment.words.length) {
+        manifestItem.alignment = {
+          words: validWords.map((w) => ({
+            text: w.text,
+            start: w.start,
+            end: w.end,
+          })),
+        };
+      } else {
+        console.warn(`[zipBuilder] Alignment inválido o no monotónico omitido para narración '${item.id}'`);
+      }
+    }
+
+    return manifestItem;
   });
 
   const manifest: OutputPackageManifest = {
