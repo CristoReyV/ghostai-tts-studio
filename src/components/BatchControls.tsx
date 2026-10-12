@@ -34,6 +34,7 @@ import {
   Tag,
   Info,
   Lock,
+  Captions,
 } from "lucide-react";
 import type {
   GatewayModel,
@@ -88,6 +89,10 @@ export interface BatchControlsProps {
   onSelectModel: (modelId: string) => void;
   onSelectOutputFormat: (format: string) => void;
   onVoiceAdded?: (voice: GatewayVoice) => void;
+  missingCaptionsCount?: number;
+  isAligningSubtitles?: boolean;
+  aligningProgress?: { current: number; total: number } | null;
+  onAlignMissingSubtitles?: () => void;
   isGenerating: boolean;
   onGenerateAll: () => void;
   onCancelGeneration: () => void;
@@ -159,6 +164,10 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   onSelectModel,
   onSelectOutputFormat,
   onVoiceAdded,
+  missingCaptionsCount = 0,
+  isAligningSubtitles = false,
+  aligningProgress = null,
+  onAlignMissingSubtitles,
   isGenerating,
   onGenerateAll,
   onCancelGeneration,
@@ -214,6 +223,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   const [isSettingsExpanded, setIsSettingsExpanded] = useState(false);
   const [isModelAdvancedOpen, setIsModelAdvancedOpen] = useState(false);
   const [isFormatAdvancedOpen, setIsFormatAdvancedOpen] = useState(false);
+  const [showAlignConfirm, setShowAlignConfirm] = useState(false);
 
   // =========================================================================
   // SECTION A: USABLE ACCOUNT VOICES (POSITIVE API USABILITY EVIDENCE)
@@ -1218,6 +1228,27 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
             </span>
           </div>
 
+          {missingCaptionsCount > 0 && !isGenerating && (
+            isAligningSubtitles ? (
+              <div className="subtitles-aligning-progress mr-2" data-testid="subtitles-aligning-progress">
+                <Loader2 size={15} className="animate-spin mr-1 text-cyan-400" />
+                <span>Alineando ({aligningProgress?.current || 0} / {aligningProgress?.total || missingCaptionsCount})...</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn-batch-subtitles mr-2"
+                data-testid="btn-align-missing-subtitles"
+                onClick={() => setShowAlignConfirm(true)}
+                disabled={!isAuthenticated || !isProviderConnected}
+                title="Generar timestamps de subtítulos para audios existentes sin volver a sintetizar la voz"
+              >
+                <Captions size={15} className="mr-1.5" />
+                <span>Generar Subtítulos Faltantes ({missingCaptionsCount})</span>
+              </button>
+            )
+          )}
+
           {isGenerating ? (
             <button
               type="button"
@@ -2085,6 +2116,39 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+    
+      {showAlignConfirm && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-content align-confirm-modal">
+            <h3 className="modal-title">Confirmar Alineación de Subtítulos</h3>
+            <p className="modal-body">
+              Se alinearán <strong>{missingCaptionsCount}</strong> audios existentes.
+              <br />
+              <strong>No se regenerarán las voces.</strong> El audio permanecerá byte a byte intacto.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-modal-cancel"
+                onClick={() => setShowAlignConfirm(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-modal-confirm"
+                data-testid="btn-confirm-align-missing"
+                onClick={() => {
+                  setShowAlignConfirm(false);
+                  onAlignMissingSubtitles?.();
+                }}
+              >
+                Alinear Subtítulos
+              </button>
+            </div>
           </div>
         </div>
       )}

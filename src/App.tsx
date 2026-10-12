@@ -13,12 +13,14 @@ import type {
   GhostAiTtsFile,
   StudioNarrationItem,
   ZipDownloadStatus,
+  CaptionStatus,
 } from "./types/tts";
 import {
   checkGatewayHealth,
   fetchGatewayModels,
   fetchGatewayVoices,
   generateNarrationAudio,
+  alignExistingAudio,
   getGatewayAuthToken,
   clearGatewayAuthToken,
   connectElevenLabs,
@@ -115,6 +117,8 @@ export const App: React.FC = () => {
 
   // Execution states
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isAligningSubtitles, setIsAligningSubtitles] = useState<boolean>(false);
+  const [aligningProgress, setAligningProgress] = useState<{ current: number; total: number } | null>(null);
   const [systemNotification, setSystemNotification] = useState<{
     type: "success" | "error" | "info" | "warning";
     title?: string;
@@ -352,7 +356,20 @@ export const App: React.FC = () => {
             project: session.project,
             items: session.items,
           });
-          setItems(session.items);
+          const normalized = session.items.map((it) => {
+            if (it.status === "READY") {
+              const textGen = it.textAtGeneration || it.text;
+              const hasAlign = Boolean(it.alignment && it.alignment.words && it.alignment.words.length > 0);
+              const isOutdated = Boolean(textGen && it.text.trim() !== textGen.trim());
+              return {
+                ...it,
+                textAtGeneration: textGen,
+                alignmentStatus: (it.alignmentStatus || (isOutdated ? "OUTDATED" : hasAlign ? "SYNCED" : "MISSING")) as CaptionStatus,
+              };
+            }
+            return it;
+          });
+          setItems(normalized);
           const readyCount = session.items.filter((i) => i.status === "READY").length;
           showNotification(
             "info",
@@ -643,6 +660,10 @@ export const App: React.FC = () => {
                   audioBlob: genResult.blob,
                   audioUrl: newAudioUrl,
                   alignment: genResult.alignment || undefined,
+                  textAtGeneration: currentItem.text,
+                  alignmentText: genResult.alignment ? currentItem.text : undefined,
+                  alignmentStatus: (genResult.alignment ? "SYNCED" : "MISSING") as CaptionStatus,
+                  alignmentError: undefined,
                   requestId: genResult.requestId,
                   responseBytes: genResult.blob.size,
                   error: undefined,
@@ -806,6 +827,190 @@ export const App: React.FC = () => {
     executeSequentialGeneration([id]);
   };
 
+  // 8b. Align Single Item (Forced Alignment without audio regeneration)
+  const handleAlignSingle = async (id: string, overrideText?: string) => {
+    if (!isAuthenticated) {
+      showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+    if (!isProviderConnected) {
+      showNotification("error", "Conecta ElevenLabs para sincronizar subtítulos.");
+      return;
+    }
+
+    const currentItem = itemsRef.current.find((it) => it.id === id);
+    if (!currentItem) return;
+
+    let audioBlob = currentItem.audioBlob;
+    if (!audioBlob && currentItem.audioUrl) {
+      try {
+        const resp = await fetch(currentItem.audioUrl);
+        audioBlob = await resp.blob();
+      } catch (_) {}
+    }
+
+    if (!audioBlob || audioBlob.size === 0) {
+      showNotification("error", "No hay audio existente para sincronizar subtítulos.");
+      return;
+    }
+
+    const textToUse = overrideText || (currentItem.textAtGeneration || currentItem.text);
+
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === id ? { ...it, alignmentStatus: "ALIGNING" as CaptionStatus, alignmentError: undefined } : it
+      )
+    );
+
+    try {
+      const result = await alignExistingAudio({
+        audioBlob,
+        text: textToUse,
+        generationItemId: currentItem.generationItemId,
+      });
+
+      setItems((prev) => {
+        const updated = prev.map((it) =>
+          it.id === id
+            ? {
+                ...it,
+                alignment: result.alignment,
+                alignmentText: textToUse,
+                textAtGeneration: currentItem.textAtGeneration || textToUse,
+                alignmentStatus: "SYNCED" as CaptionStatus,
+                alignmentError: undefined,
+              }
+            : it
+        );
+        if (currentProject) {
+          saveActiveSession(currentProject.project, updated).catch(() => {});
+        }
+        return updated;
+      });
+
+      showNotification("success", `Subtítulos sincronizados para '${currentItem.id}'.`);
+    } catch (err: unknown) {
+      const msg = (err as Error).message || "Error al sincronizar subtítulos.";
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id
+            ? {
+                ...it,
+                alignmentStatus: "ERROR" as CaptionStatus,
+                alignmentError: msg,
+              }
+            : it
+        )
+      );
+      showNotification("error", msg);
+    }
+  };
+
+  // 8c. Bulk Missing Subtitles Alignment
+  const handleAlignMissingSubtitles = async () => {
+    if (!isAuthenticated) {
+      showNotification("error", "Conecta tu acceso para usar esta acción.");
+      return;
+    }
+    if (!isProviderConnected) {
+      showNotification("error", "Conecta ElevenLabs para sincronizar subtítulos.");
+      return;
+    }
+
+    const eligible = itemsRef.current.filter(
+      (it) =>
+        it.status === "READY" &&
+        (!it.alignment || !it.alignment.words || it.alignment.words.length === 0) &&
+        (!it.textAtGeneration || it.text.trim() === it.textAtGeneration.trim())
+    );
+
+    if (eligible.length === 0) {
+      showNotification("info", "No hay audios pendientes de subtítulos.");
+      return;
+    }
+
+    setIsAligningSubtitles(true);
+    setAligningProgress({ current: 0, total: eligible.length });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < eligible.length; i++) {
+      const item = eligible[i];
+      setAligningProgress({ current: i + 1, total: eligible.length });
+
+      let audioBlob = item.audioBlob;
+      if (!audioBlob && item.audioUrl) {
+        try {
+          const resp = await fetch(item.audioUrl);
+          audioBlob = await resp.blob();
+        } catch (_) {}
+      }
+
+      if (!audioBlob || audioBlob.size === 0) {
+        failCount++;
+        continue;
+      }
+
+      const textToUse = item.textAtGeneration || item.text;
+
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === item.id ? { ...it, alignmentStatus: "ALIGNING" as CaptionStatus, alignmentError: undefined } : it
+        )
+      );
+
+      try {
+        const result = await alignExistingAudio({
+          audioBlob,
+          text: textToUse,
+          generationItemId: item.generationItemId,
+        });
+
+        successCount++;
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  alignment: result.alignment,
+                  alignmentText: textToUse,
+                  textAtGeneration: item.textAtGeneration || textToUse,
+                  alignmentStatus: "SYNCED",
+                  alignmentError: undefined,
+                }
+              : it
+          )
+        );
+      } catch (err: unknown) {
+        failCount++;
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? {
+                  ...it,
+                  alignmentStatus: "ERROR",
+                  alignmentError: (err as Error).message || "Error al sincronizar",
+                }
+              : it
+          )
+        );
+      }
+    }
+
+    setIsAligningSubtitles(false);
+    setAligningProgress(null);
+
+    if (currentProject) {
+      saveActiveSession(currentProject.project, itemsRef.current).catch(() => {});
+    }
+
+    showNotification(
+      successCount > 0 ? "success" : "warning",
+      `Alineación completada: ${successCount} sincronizados, ${failCount} errores.`
+    );
+  };
+
   // 9. Cancel Running Generation
   const handleCancelGeneration = () => {
     if (abortControllerRef.current) {
@@ -898,6 +1103,12 @@ export const App: React.FC = () => {
 
   const hasErrors = items.some((it) => it.status === "ERROR");
   const readyItemsCount = items.filter((it) => it.status === "READY").length;
+  const missingCaptionsCount = items.filter((it) => {
+    const hasAudio = it.status === "READY" || !!it.audioUrl;
+    const hasValidAlignment = it.alignment && Array.isArray(it.alignment.words) && it.alignment.words.length > 0;
+    const textMatches = !it.textAtGeneration || it.text.trim() === it.textAtGeneration.trim();
+    return hasAudio && !hasValidAlignment && textMatches;
+  }).length;
 
   if (isCheckingAuth) {
     return (
@@ -1075,6 +1286,10 @@ export const App: React.FC = () => {
                 onSelectOutputFormat={handleSelectGlobalOutputFormat}
                 onVoiceAdded={handleVoiceAdded}
                 isGenerating={isGenerating}
+                missingCaptionsCount={missingCaptionsCount}
+                isAligningSubtitles={isAligningSubtitles}
+                aligningProgress={aligningProgress}
+                onAlignMissingSubtitles={handleAlignMissingSubtitles}
                 onGenerateAll={handleGenerateAll}
                 onCancelGeneration={handleCancelGeneration}
                 onRetryFailed={handleRetryFailed}
@@ -1102,7 +1317,9 @@ export const App: React.FC = () => {
                     models={models}
                     isGeneratingAny={isGenerating}
                     providerTier={providerTier}
+                    isAligningAny={isAligningSubtitles}
                     onGenerateSingle={handleGenerateSingle}
+                    onAlignSingle={handleAlignSingle}
                     onUpdateItemVoice={handleUpdateItemVoice}
                     onUpdateItemModel={handleUpdateItemModel}
                     onUpdateDuration={handleUpdateDuration}

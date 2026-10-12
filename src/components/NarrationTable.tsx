@@ -14,7 +14,9 @@ interface NarrationTableProps {
   models: GatewayModel[];
   isGeneratingAny: boolean;
   providerTier?: string | null;
+  isAligningAny?: boolean;
   onGenerateSingle: (id: string) => void;
+  onAlignSingle?: (id: string, overrideText?: string) => void;
   onUpdateItemVoice: (id: string, voiceId: string) => void;
   onUpdateItemModel: (id: string, modelId: string) => void;
   onUpdateDuration: (id: string, durationSecs: number) => void;
@@ -28,7 +30,9 @@ export const NarrationTable: React.FC<NarrationTableProps> = ({
   models,
   isGeneratingAny,
   providerTier,
+  isAligningAny = false,
   onGenerateSingle,
+  onAlignSingle,
   onUpdateItemVoice,
   onUpdateItemModel,
   onUpdateDuration,
@@ -143,7 +147,9 @@ export const NarrationTable: React.FC<NarrationTableProps> = ({
                     models={models}
                     isGeneratingAny={isGeneratingAny}
                     providerTier={providerTier}
+                    isAligningAny={isAligningAny}
                     onGenerateSingle={onGenerateSingle}
+                    onAlignSingle={onAlignSingle}
                     onUpdateItemVoice={onUpdateItemVoice}
                     onUpdateItemModel={onUpdateItemModel}
                     onUpdateDuration={onUpdateDuration}

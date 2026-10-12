@@ -122,6 +122,9 @@ export const RecoveryVaultSection: React.FC<RecoveryVaultSectionProps> = ({
           audioBlob,
           audioUrl,
           alignment: item.alignment || undefined,
+          textAtGeneration: item.text || undefined,
+          generationItemId: item.id,
+          alignmentStatus: (item.alignment && Array.isArray(item.alignment.words) && item.alignment.words.length > 0) ? "SYNCED" : "MISSING",
         });
       }
 

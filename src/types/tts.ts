@@ -54,6 +54,8 @@ export interface GhostAiTtsFile {
 
 export type NarrationStatus = "PENDING" | "GENERATING" | "READY" | "ERROR" | "CANCELLED";
 
+export type CaptionStatus = "SYNCED" | "MISSING" | "OUTDATED" | "ERROR" | "ALIGNING";
+
 export interface StudioNarrationItem extends GhostAiTtsItem {
   status: NarrationStatus;
   duration?: number; // duration in seconds
@@ -62,6 +64,11 @@ export interface StudioNarrationItem extends GhostAiTtsItem {
   audioBlob?: Blob;
   audioUrl?: string; // stable URL.createObjectURL
   responseBytes?: number;
+  textAtGeneration?: string;
+  alignmentText?: string;
+  alignmentStatus?: CaptionStatus;
+  alignmentError?: string;
+  generationItemId?: string;
 }
 
 export type VoiceOrigin = "default" | "premade" | "shared_library" | "library_copy" | "personal" | "workspace" | "owned" | "unknown";

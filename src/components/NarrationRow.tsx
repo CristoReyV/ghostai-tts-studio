@@ -1,7 +1,7 @@
 /**
  * @file src/components/NarrationRow.tsx
- * Individual narration row with full metadata, status badge, individual generate/retry,
- * and stable audio preview player.
+ * Individual narration row with full metadata, independent audio and captions status badges,
+ * text authority protection, individual generate/retry, and forced alignment actions.
  */
 
 import React, { useState } from "react";
@@ -14,8 +14,9 @@ import {
   Square,
   ChevronDown,
   ChevronUp,
+  Sparkles,
 } from "lucide-react";
-import type { GatewayModel, GatewayVoice, StudioNarrationItem } from "../types/tts";
+import type { CaptionStatus, GatewayModel, GatewayVoice, StudioNarrationItem } from "../types/tts";
 import { AudioPlayer } from "./AudioPlayer";
 import { checkVoicePlanAvailability } from "../services/voiceLibrary";
 
@@ -26,7 +27,9 @@ interface NarrationRowProps {
   models: GatewayModel[];
   isGeneratingAny: boolean;
   providerTier?: string | null;
+  isAligningAny?: boolean;
   onGenerateSingle: (id: string) => void;
+  onAlignSingle?: (id: string, overrideText?: string) => void;
   onUpdateItemVoice: (id: string, voiceId: string) => void;
   onUpdateItemModel: (id: string, modelId: string) => void;
   onUpdateDuration: (id: string, durationSecs: number) => void;
@@ -39,7 +42,9 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
   models,
   isGeneratingAny,
   providerTier,
+  isAligningAny = false,
   onGenerateSingle,
+  onAlignSingle,
   onUpdateItemVoice,
   onUpdateItemModel,
   onUpdateDuration,
@@ -47,6 +52,8 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const isCurrentGenerating = item.status === "GENERATING";
+  const isCurrentAligning = item.alignmentStatus === "ALIGNING";
+  const isRowBusy = isGeneratingAny || isAligningAny || isCurrentGenerating || isCurrentAligning;
 
   const { usableVoices, restrictedVoices } = React.useMemo(() => {
     const usable: GatewayVoice[] = [];
@@ -62,42 +69,112 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
     return { usableVoices: usable, restrictedVoices: restricted };
   }, [voices, providerTier]);
 
-  const renderStatusBadge = () => {
-    switch (item.status) {
-      case "READY":
+  const hasAudio = item.status === "READY" || !!item.audioUrl;
+
+  // Determine Caption Status
+  const captionStatus: CaptionStatus = React.useMemo(() => {
+    if (item.alignmentStatus === "ALIGNING") {
+      return "ALIGNING";
+    }
+    if (item.alignmentStatus === "ERROR") {
+      return "ERROR";
+    }
+    if (!hasAudio) {
+      return "MISSING";
+    }
+    // Check text authority mismatch
+    const textAtGen = item.textAtGeneration || item.alignmentText;
+    if (textAtGen && textAtGen !== item.text) {
+      return "OUTDATED";
+    }
+    if (item.alignment && Array.isArray(item.alignment.words) && item.alignment.words.length > 0) {
+      return "SYNCED";
+    }
+    return "MISSING";
+  }, [item.alignmentStatus, item.textAtGeneration, item.alignmentText, item.text, item.alignment, hasAudio]);
+
+  const textAtGen = item.textAtGeneration || item.alignmentText;
+  const isTextMismatch = hasAudio && Boolean(textAtGen && textAtGen !== item.text);
+
+  // Render Audio Status Badge
+  const renderAudioStatusBadge = () => {
+    if (item.status === "READY") {
+      return (
+        <span className="badge badge-audio-ready" title="Audio generado disponible">
+          <CheckCircle2 size={11} className="mr-1" />
+          Generado
+        </span>
+      );
+    }
+    if (item.status === "GENERATING") {
+      return (
+        <span className="badge badge-audio-generating" title="Sintetizando audio...">
+          <span className="badge-spinner mr-1"></span>
+          Generando
+        </span>
+      );
+    }
+    if (item.status === "ERROR") {
+      return (
+        <span className="badge badge-audio-error" title={item.error || "Error al generar audio"}>
+          <AlertCircle size={11} className="mr-1" />
+          Error
+        </span>
+      );
+    }
+    if (item.status === "CANCELLED") {
+      return (
+        <span className="badge badge-cancelled">
+          <Square size={10} className="mr-1" />
+          Cancelado
+        </span>
+      );
+    }
+    return (
+      <span className="badge badge-audio-pending" title="Audio pendiente de generar">
+        <Clock size={11} className="mr-1" />
+        Pendiente
+      </span>
+    );
+  };
+
+  // Render Caption Status Badge
+  const renderCaptionStatusBadge = () => {
+    switch (captionStatus) {
+      case "SYNCED":
         return (
-          <span className="badge badge-ready">
-            <CheckCircle2 size={12} className="mr-1" />
-            READY
+          <span className="badge badge-captions-synced" title="Subtítulos sincronizados y listos">
+            <CheckCircle2 size={11} className="mr-1" />
+            Sincronizados
           </span>
         );
-      case "GENERATING":
+      case "ALIGNING":
         return (
-          <span className="badge badge-generating">
+          <span className="badge badge-captions-aligning" title="Alineando audio con el texto...">
             <span className="badge-spinner mr-1"></span>
-            GENERATING
+            Alineando
+          </span>
+        );
+      case "OUTDATED":
+        return (
+          <span className="badge badge-captions-outdated" title="El texto ha cambiado desde que se generó este audio">
+            <AlertCircle size={11} className="mr-1" />
+            Desactualizados
           </span>
         );
       case "ERROR":
         return (
-          <span className="badge badge-error" title={item.error || "Error en la generación"}>
-            <AlertCircle size={12} className="mr-1" />
-            ERROR
+          <span className="badge badge-captions-error" title={item.alignmentError || "Error al alinear subtítulos"}>
+            <AlertCircle size={11} className="mr-1" />
+            Error alineación
           </span>
         );
-      case "CANCELLED":
-        return (
-          <span className="badge badge-cancelled">
-            <Square size={10} className="mr-1" />
-            CANCELLED
-          </span>
-        );
-      case "PENDING":
+      case "MISSING":
       default:
         return (
-          <span className="badge badge-pending">
+          <span className="badge badge-captions-missing" title="Sin subtítulos generados">
             <Clock size={11} className="mr-1" />
-            PENDING
+            Sin generar
           </span>
         );
     }
@@ -121,7 +198,7 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
         </div>
       </td>
 
-      {/* Text with Expand */}
+      {/* Text with Expand and Mismatch Warning */}
       <td className="col-text">
         <div className="text-wrapper">
           <p className={`narration-text ${!isExpanded && item.text.length > 120 ? "text-truncated" : ""}`}>
@@ -146,7 +223,50 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
           )}
         </div>
 
-        {/* Error Details if ERROR */}
+        {/* Text Authority Mismatch Warning Banner */}
+        {isTextMismatch && textAtGen && (
+          <div className="text-mismatch-banner">
+            <AlertCircle size={14} className="text-amber mr-1.5 flex-shrink-0" />
+            <div className="text-mismatch-content">
+              <span className="text-mismatch-title">El texto cambió desde que se generó este audio.</span>
+              <span className="text-mismatch-desc">
+                Audio original con: &ldquo;{textAtGen}&rdquo;
+              </span>
+              <div className="text-mismatch-actions">
+                {onAlignSingle && (
+                  <button
+                    type="button"
+                    className="btn-mismatch-opt"
+                    onClick={() => onAlignSingle(item.id, textAtGen)}
+                    disabled={isRowBusy}
+                    title="Alinear usando el texto original que corresponde exactamente a este audio"
+                  >
+                    Usar texto original del audio
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn-mismatch-opt btn-mismatch-regen"
+                  onClick={() => onGenerateSingle(item.id)}
+                  disabled={isRowBusy}
+                  title="Regenerar el audio completo con el texto nuevo"
+                >
+                  Regenerar audio
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Caption Alignment Error Details if present */}
+        {captionStatus === "ERROR" && item.alignmentError && (
+          <div className="item-error-notice">
+            <AlertCircle size={12} className="text-amber mr-1 flex-shrink-0" />
+            <span className="error-text-msg">Alineación: {item.alignmentError}</span>
+          </div>
+        )}
+
+        {/* Audio Synthesis Error Details if ERROR */}
         {item.status === "ERROR" && item.error && (
           <div className="item-error-notice">
             <AlertCircle size={12} className="text-rose mr-1 flex-shrink-0" />
@@ -168,7 +288,7 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
           <select
             value={item.voiceId || ""}
             onChange={(e) => onUpdateItemVoice(item.id, e.target.value)}
-            disabled={isGeneratingAny}
+            disabled={isRowBusy}
             className="row-select"
             title="Voz asignada a este elemento"
           >
@@ -200,7 +320,7 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
           <select
             value={item.modelId || "eleven_multilingual_v2"}
             onChange={(e) => onUpdateItemModel(item.id, e.target.value)}
-            disabled={isGeneratingAny}
+            disabled={isRowBusy}
             className="row-select row-select-muted"
             title="Modelo asignado a este elemento"
           >
@@ -213,19 +333,26 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
         </div>
       </td>
 
-      {/* Status Badge & Duration */}
+      {/* Status Badges: Independent Audio & Subtitles */}
       <td className="col-status">
-        <div className="status-cell">
-          {renderStatusBadge()}
+        <div className="badge-status-stack">
+          <div className="status-line-item">
+            <span className="status-line-label">Audio</span>
+            {renderAudioStatusBadge()}
+          </div>
+          <div className="status-line-item">
+            <span className="status-line-label">Subtítulos</span>
+            {renderCaptionStatusBadge()}
+          </div>
           {item.duration !== undefined && item.duration > 0 && (
-            <span className="duration-tag">{item.duration.toFixed(1)}s</span>
+            <span className="duration-tag mt-1">{item.duration.toFixed(1)}s</span>
           )}
         </div>
       </td>
 
       {/* Audio Preview Player */}
       <td className="col-audio">
-        {item.status === "READY" && item.audioUrl ? (
+        {hasAudio && item.audioUrl ? (
           <AudioPlayer
             src={item.audioUrl}
             fileName={fileName}
@@ -243,24 +370,73 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
       {/* Row Actions */}
       <td className="col-actions">
         <div className="row-actions-group">
-          {item.status === "READY" ? (
+          {/* Subtitle / Alignment Action */}
+          {hasAudio && onAlignSingle && (
+            <>
+              {captionStatus === "MISSING" && (
+                <button
+                  type="button"
+                  onClick={() => onAlignSingle(item.id)}
+                  disabled={isRowBusy || isTextMismatch}
+                  className="btn-row-action btn-align-only"
+                  title={
+                    isTextMismatch
+                      ? "Resuelve la discrepancia de texto para alinear"
+                      : "Generar subtítulos para este audio existente mediante Forced Alignment"
+                  }
+                >
+                  <Sparkles size={12} className="mr-1" />
+                  <span>GENERAR SOLO SUBTÍTULOS</span>
+                </button>
+              )}
+
+              {captionStatus === "SYNCED" && (
+                <button
+                  type="button"
+                  onClick={() => onAlignSingle(item.id)}
+                  disabled={isRowBusy || isTextMismatch}
+                  className="btn-row-action btn-align-regen"
+                  title="Regenerar subtítulos para este audio existente"
+                >
+                  <Sparkles size={12} className="mr-1" />
+                  <span>REGENERAR SUBTÍTULOS</span>
+                </button>
+              )}
+
+              {captionStatus === "ERROR" && (
+                <button
+                  type="button"
+                  onClick={() => onAlignSingle(item.id)}
+                  disabled={isRowBusy}
+                  className="btn-row-action btn-align-retry"
+                  title="Reintentar Forced Alignment sin regenerar el audio"
+                >
+                  <Sparkles size={12} className="mr-1" />
+                  <span>REINTENTAR SUBTÍTULOS</span>
+                </button>
+              )}
+            </>
+          )}
+
+          {/* Audio Action: Generate / Regenerate */}
+          {hasAudio ? (
             <button
               type="button"
               onClick={() => onGenerateSingle(item.id)}
-              disabled={isGeneratingAny}
-              className="btn-row-action"
-              title="Regenerar este audio individualmente"
+              disabled={isRowBusy}
+              className="btn-row-action btn-row-regen-audio"
+              title="Regenerar audio (+ subtítulos) con la voz configurada"
             >
-              <RotateCcw size={13} className="mr-1" />
-              <span>Regenerar</span>
+              <RotateCcw size={12} className="mr-1" />
+              <span>REGENERAR AUDIO + SUBTÍTULOS</span>
             </button>
           ) : item.status === "ERROR" ? (
             <button
               type="button"
               onClick={() => onGenerateSingle(item.id)}
-              disabled={isGeneratingAny}
+              disabled={isRowBusy}
               className="btn-row-action btn-row-retry"
-              title="Reintentar esta narración"
+              title="Reintentar la generación de esta narración"
             >
               <RotateCcw size={13} className="mr-1" />
               <span>Reintentar</span>
@@ -269,7 +445,7 @@ export const NarrationRow: React.FC<NarrationRowProps> = ({
             <button
               type="button"
               onClick={() => onGenerateSingle(item.id)}
-              disabled={isGeneratingAny}
+              disabled={isRowBusy}
               className="btn-row-action btn-row-generate"
               title="Generar este audio individualmente"
             >

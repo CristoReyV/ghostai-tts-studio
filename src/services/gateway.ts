@@ -369,6 +369,74 @@ export async function generateNarrationAudio(params: GenerateAudioParams): Promi
   };
 }
 
+export interface AlignAudioParams {
+  audioBlob: Blob;
+  text: string;
+  generationItemId?: string;
+  signal?: AbortSignal;
+}
+
+export interface AlignAudioResult {
+  alignment: NarrationAlignment;
+  requestId: string;
+  generationItemId?: string;
+}
+
+/**
+ * Runs ElevenLabs Forced Alignment on existing audio via Gateway.
+ * Strictly preserves existing audio; never generates new audio.
+ */
+export async function alignExistingAudio(
+  params: AlignAudioParams
+): Promise<AlignAudioResult> {
+  const baseUrl = getGatewayBaseUrl();
+  const token = getGatewayAuthToken();
+
+  const formData = new FormData();
+  formData.append("audio", params.audioBlob, "narration.mp3");
+  formData.append("text", params.text);
+  if (params.generationItemId) {
+    formData.append("generationItemId", params.generationItemId);
+  }
+
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = "Bearer " + token.trim();
+  }
+
+  const res = await fetch(`${baseUrl}/api/tts/alignment`, {
+    method: "POST",
+    headers,
+    body: formData,
+    credentials: "include",
+    signal: params.signal,
+  });
+
+  if (!res.ok) {
+    let errBody = null;
+    try {
+      errBody = await res.json();
+    } catch (_) {}
+
+    const code = errBody?.error?.code || "ALIGNMENT_ERROR";
+    const msg = errBody?.error?.message || `Error en la alineación forzada (${res.status})`;
+    const requestId = errBody?.requestId || res.headers.get("X-TTS-Request-ID") || undefined;
+
+    if (res.status === 401 && onAuthExpiredCallback) {
+      onAuthExpiredCallback();
+    }
+
+    throw new TtsGatewayError(msg, code, res.status, requestId);
+  }
+
+  const data = await res.json();
+  return {
+    alignment: data.alignment,
+    requestId: data.requestId,
+    generationItemId: data.generationItemId,
+  };
+}
+
 export interface ByokStatusResponse {
   connected: boolean;
   provider?: string;
