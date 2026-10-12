@@ -23,11 +23,12 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { downloadBlob, buildGhostAiTtsPackage } from "../services/zipBuilder";
-import { loadActiveSession } from "../services/projectStorage";
+import { loadActiveSession, savePackageBlob, loadPackageBlob } from "../services/projectStorage";
 import {
   GHOSTAI_MESSAGE_TYPES,
   getBridgeIdFromUrl,
   sanitizeFileName,
+  isSandboxRestrictedDownload,
   type GhostAiZipTransferPayload,
 } from "../utils/environment";
 
@@ -37,6 +38,10 @@ export const DownloadReceiver: React.FC = () => {
   const [status, setStatus] = useState<ReceiverStatus>("PREPARING");
   const [zipData, setZipData] = useState<GhostAiZipTransferPayload | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const isSandboxRestricted = React.useMemo(() => {
+    return isSandboxRestrictedDownload();
+  }, []);
 
   const handshakeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,6 +115,7 @@ export const DownloadReceiver: React.FC = () => {
         });
         // Transition directly to ZIP LISTO state
         setStatus("READY");
+        savePackageBlob(payload.bridgeId, payload.blob, safeName).catch(() => {});
 
         // Send PAYLOAD_RECEIVED acknowledgement back to window.opener (Section 12)
         if (window.opener && window.opener !== window) {
@@ -160,6 +166,25 @@ export const DownloadReceiver: React.FC = () => {
     timeoutTimerRef.current = setTimeout(async () => {
       if (receivedRef.current) return;
       cleanupTimers();
+
+      // First attempt to load stored package blob by bridgeId
+      if (expectedBridgeId) {
+        try {
+          const cachedPkg = await loadPackageBlob(expectedBridgeId);
+          if (cachedPkg && cachedPkg.blob instanceof Blob) {
+            receivedRef.current = true;
+            setZipData({
+              blob: cachedPkg.blob,
+              fileName: sanitizeFileName(cachedPkg.fileName),
+              itemCount: 1,
+              projectName: "GhostAI Project",
+              bridgeId: expectedBridgeId,
+            });
+            setStatus("READY");
+            return;
+          }
+        } catch (_pkgErr) {}
+      }
 
       // Secondary fallback: attempt to load from IndexedDB if same-origin storage was shared
       try {
@@ -287,16 +312,66 @@ export const DownloadReceiver: React.FC = () => {
                 </div>
               </div>
 
+              {isSandboxRestricted && (
+                <div className="receiver-sandbox-warning" data-testid="receiver-sandbox-warning">
+                  <AlertCircle size={18} className="text-amber mr-2.5 flex-shrink-0" />
+                  <div className="sandbox-warning-text">
+                    <span className="font-semibold block text-amber-200">
+                      Entorno de Flow con restricciones de descarga
+                    </span>
+                    <span className="text-xs text-slate-300 block mt-1 leading-relaxed">
+                      El navegador bloquea la descarga directa dentro de esta ventana emergente. Para guardar tu archivo ZIP sin bloqueos, ábrelo en una pestaña segura independiente.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="receiver-actions">
-                <button
-                  type="button"
-                  className="btn-download-primary"
-                  onClick={handleDownloadClick}
-                  data-testid="btn-receiver-download"
-                >
-                  <Download size={20} className="mr-2" />
-                  <span>DESCARGAR ZIP</span>
-                </button>
+                {isSandboxRestricted ? (
+                  <div className="receiver-sandbox-actions-stack">
+                    <a
+                      href={`https://ghostai-tts-studio.smartbrain.lat/?mode=download&bridge=${zipData.bridgeId}`}
+                      target="_blank"
+                      rel="noopener"
+                      className="btn-download-primary btn-open-safe-tab"
+                      data-testid="btn-open-safe-tab"
+                    >
+                      <ExternalLink size={18} className="mr-2" />
+                      <span>ABRIR DESCARGA EN PESTAÑA SEGURA</span>
+                    </a>
+                    <div className="receiver-secondary-row flex items-center gap-2 mt-2">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handleDownloadClick}
+                        data-testid="btn-receiver-download"
+                        title="Intentar descarga directa de todos modos"
+                      >
+                        <Download size={14} className="mr-1.5" />
+                        <span>Intentar Descarga Directa</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handleOpenOfficialStudio}
+                        data-testid="btn-fallback-portal"
+                      >
+                        <ExternalLink size={14} className="mr-1.5" />
+                        <span>Abrir Studio Principal</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-download-primary"
+                    onClick={handleDownloadClick}
+                    data-testid="btn-receiver-download"
+                  >
+                    <Download size={20} className="mr-2" />
+                    <span>DESCARGAR ZIP</span>
+                  </button>
+                )}
               </div>
             </div>
           )}

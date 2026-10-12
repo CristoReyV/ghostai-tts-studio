@@ -128,3 +128,60 @@ export async function clearActiveSession(): Promise<void> {
     console.warn("[GhostAI Storage] Failed to clear active session:", err);
   }
 }
+
+/**
+ * Saves a generated ZIP Blob directly into IndexedDB without Base64 conversion.
+ */
+export async function savePackageBlob(
+  bridgeId: string,
+  blob: Blob,
+  fileName: string
+): Promise<void> {
+  if (!bridgeId || !(blob instanceof Blob)) return;
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const data = {
+        key: `package_${bridgeId}`,
+        blob,
+        fileName,
+        savedAt: new Date().toISOString(),
+      };
+      const req = store.put(data);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error || new Error("Failed to store package blob"));
+    });
+  } catch (err) {
+    console.warn("[GhostAI Storage] Failed to store package blob in IndexedDB:", err);
+  }
+}
+
+/**
+ * Retrieves a previously stored package ZIP Blob by bridgeId.
+ */
+export async function loadPackageBlob(
+  bridgeId: string
+): Promise<{ blob: Blob; fileName: string } | null> {
+  if (!bridgeId) return null;
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(`package_${bridgeId}`);
+      req.onsuccess = () => {
+        const res = req.result;
+        if (res && res.blob instanceof Blob) {
+          resolve({ blob: res.blob, fileName: res.fileName || "ghostai-tts-package.zip" });
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch (_e) {
+    return null;
+  }
+}

@@ -68,7 +68,8 @@ export function isDownloadReceiverMode(): boolean {
     return false;
   }
   try {
-    return window.location.search.includes("mode=receiver") || window.location.search.includes("mode=download-receiver");
+    const search = window.location.search || "";
+    return search.includes("mode=receiver") || search.includes("mode=download-receiver") || search.includes("mode=download");
   } catch {
     return false;
   }
@@ -77,6 +78,37 @@ export function isDownloadReceiverMode(): boolean {
 /**
  * Checks whether the current window is in GhostAI Admin mode (?mode=admin).
  */
+/**
+ * Detects whether the current download environment is subject to iframe sandbox restrictions.
+ */
+export function isSandboxRestrictedDownload(): boolean {
+  if (typeof window === "undefined" || !window.location) {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("sandboxed") === "1" || params.get("sandbox") === "1") {
+      return true;
+    }
+    if (isEmbeddedFrame()) {
+      return true;
+    }
+    if (window.opener && window.opener !== window) {
+      try {
+        if (window.opener.top !== window.opener.self) {
+          return true;
+        }
+      } catch (_err) {
+        // Cross-origin restriction accessing opener's top indicates framed opener
+        return true;
+      }
+    }
+  } catch (_e) {
+    // Fail safe
+  }
+  return false;
+}
+
 export function isAdminMode(): boolean {
   if (typeof window === "undefined" || !window.location) {
     return false;
@@ -165,4 +197,5 @@ export interface GhostAiZipTransferPayload {
   itemCount: number;
   projectName: string;
   bridgeId: string;
+  isSandboxed?: boolean;
 }

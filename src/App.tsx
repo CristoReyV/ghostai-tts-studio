@@ -38,7 +38,8 @@ import {
   GHOSTAI_MESSAGE_TYPES,
   type GhostAiZipTransferPayload,
 } from "./utils/environment";
-import { saveActiveSession, loadActiveSession, clearActiveSession } from "./services/projectStorage";
+import { saveActiveSession,
+  savePackageBlob, loadActiveSession, clearActiveSession } from "./services/projectStorage";
 import { DownloadReceiver } from "./components/DownloadReceiver";
 import { AdminDashboard } from "./components/Admin/AdminDashboard";
 import { RecoveryVaultSection } from "./components/RecoveryVaultSection";
@@ -1037,7 +1038,8 @@ export const App: React.FC = () => {
     activeBridgeIdRef.current = bridgeId;
     isReceiverReadyRef.current = false;
 
-    const receiverUrl = `${window.location.origin}${window.location.pathname}?mode=receiver&bridge=${bridgeId}`;
+    const isEmbedded = isEmbeddedFrame();
+    const receiverUrl = `${window.location.origin}${window.location.pathname}?mode=receiver&bridge=${bridgeId}${isEmbedded ? "&sandboxed=1" : ""}`;
     let popup: WindowProxy | null = null;
     try {
       popup = window.open(receiverUrl, "_blank");
@@ -1064,13 +1066,18 @@ export const App: React.FC = () => {
       includeOnlyReady: true,
     })
       .then((result) => {
+        const isEmbedded = isEmbeddedFrame();
         const transferPayload: GhostAiZipTransferPayload = {
           blob: result.blob,
           fileName: result.fileName,
           itemCount: result.itemCount,
           projectName: currentProject.project.name,
           bridgeId,
+          isSandboxed: isEmbedded,
         };
+
+        // Cache binary Blob directly in IndexedDB for standalone top-level tab retrieval
+        savePackageBlob(bridgeId, result.blob, result.fileName).catch(() => {});
 
         pendingTransferRef.current = transferPayload;
 

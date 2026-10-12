@@ -6298,3 +6298,39 @@ button {
   background: #0369a1;
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
 }
+
+/* ── DOWNLOAD BUG 02: Sandbox Warning & Safe Tab UX ── */
+.receiver-sandbox-warning {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.25rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  text-align: left;
+}
+
+.receiver-sandbox-actions-stack {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.btn-open-safe-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-weight: 700;
+  cursor: pointer;
+  background: linear-gradient(135deg, #0ea5e9, #0284c7);
+  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+  transition: all 0.2s ease;
+}
+
+.btn-open-safe-tab:hover {
+  background: linear-gradient(135deg, #38bdf8, #0369a1);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.5);
+}
