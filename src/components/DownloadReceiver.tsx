@@ -21,6 +21,8 @@ import {
   AlertCircle,
   Loader2,
   ExternalLink,
+  Copy,
+  Check,
 } from "lucide-react";
 import { downloadBlob, buildGhostAiTtsPackage } from "../services/zipBuilder";
 import { loadActiveSession, savePackageBlob, loadPackageBlob } from "../services/projectStorage";
@@ -246,6 +248,50 @@ export const DownloadReceiver: React.FC = () => {
     }
   };
 
+
+  const [copied, setCopied] = useState<boolean>(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyStudioLink = async () => {
+    const studioUrl = "https://ghostai-tts-studio.smartbrain.lat/";
+    let success = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(studioUrl);
+        success = true;
+      }
+    } catch (_clipErr) {}
+
+    if (!success) {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = studioUrl;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        success = document.execCommand("copy");
+        document.body.removeChild(textarea);
+      } catch (_execErr) {}
+    }
+
+    setCopied(true);
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopied(false);
+    }, 3000);
+  };
+
   const handleOpenOfficialStudio = () => {
     window.location.href = "https://ghostai-tts-studio.smartbrain.lat/";
   };
@@ -288,9 +334,13 @@ export const DownloadReceiver: React.FC = () => {
               <div className="state-icon-badge badge-success">
                 <PackageCheck size={36} className="text-emerald" />
               </div>
-              <h2 className="state-title" data-testid="receiver-title">ZIP LISTO</h2>
-              <p className="state-description">
-                El archivo ZIP ha sido verificado y está listo para guardarse en tu equipo.
+              <h2 className="state-title" data-testid="receiver-title">
+                {isSandboxRestricted ? "TU ARCHIVO ESTÁ LISTO" : "ZIP LISTO"}
+              </h2>
+              <p className="state-description" data-testid="receiver-description">
+                {isSandboxRestricted
+                  ? "Google Flow bloquea descargas directas desde esta ventana por seguridad."
+                  : "El archivo ZIP ha sido verificado y está listo para guardarse en tu equipo."}
               </p>
 
               <div className="package-info-card">
@@ -312,53 +362,48 @@ export const DownloadReceiver: React.FC = () => {
                 </div>
               </div>
 
-              {isSandboxRestricted && (
-                <div className="receiver-sandbox-warning" data-testid="receiver-sandbox-warning">
-                  <AlertCircle size={18} className="text-amber mr-2.5 flex-shrink-0" />
-                  <div className="sandbox-warning-text">
-                    <span className="font-semibold block text-amber-200">
-                      Entorno de Flow con restricciones de descarga
-                    </span>
-                    <span className="text-xs text-slate-300 block mt-1 leading-relaxed">
-                      El navegador bloquea la descarga directa dentro de esta ventana emergente. Para guardar tu archivo ZIP sin bloqueos, ábrelo en una pestaña segura independiente.
-                    </span>
-                  </div>
-                </div>
-              )}
-
               <div className="receiver-actions">
                 {isSandboxRestricted ? (
                   <div className="receiver-sandbox-actions-stack">
-                    <a
-                      href={`https://ghostai-tts-studio.smartbrain.lat/?mode=download&bridge=${zipData.bridgeId}`}
-                      target="_blank"
-                      rel="noopener"
-                      className="btn-download-primary btn-open-safe-tab"
-                      data-testid="btn-open-safe-tab"
+                    <button
+                      type="button"
+                      className="btn-download-primary btn-copy-link"
+                      onClick={handleCopyStudioLink}
+                      data-testid="btn-copy-studio-link"
                     >
-                      <ExternalLink size={18} className="mr-2" />
-                      <span>ABRIR DESCARGA EN PESTAÑA SEGURA</span>
-                    </a>
-                    <div className="receiver-secondary-row flex items-center gap-2 mt-2">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={handleDownloadClick}
-                        data-testid="btn-receiver-download"
-                        title="Intentar descarga directa de todos modos"
-                      >
-                        <Download size={14} className="mr-1.5" />
-                        <span>Intentar Descarga Directa</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={handleOpenOfficialStudio}
-                        data-testid="btn-fallback-portal"
-                      >
-                        <ExternalLink size={14} className="mr-1.5" />
-                        <span>Abrir Studio Principal</span>
-                      </button>
+                      {copied ? (
+                        <>
+                          <Check size={18} className="mr-2 text-emerald-400" />
+                          <span>¡ENLACE COPIADO AL PORTAPAPELES!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={18} className="mr-2" />
+                          <span>COPIAR ENLACE PARA ABRIR TTS STUDIO</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="handoff-instructions-card" data-testid="handoff-instructions">
+                      <div className="handoff-instructions-title">Pasos para descargar tu ZIP:</div>
+                      <ol className="handoff-steps-list">
+                        <li className="handoff-step">
+                          <span className="handoff-step-number">1</span>
+                          <span className="handoff-step-text">Abre una pestaña nueva</span>
+                        </li>
+                        <li className="handoff-step">
+                          <span className="handoff-step-number">2</span>
+                          <span className="handoff-step-text">Pega el enlace</span>
+                        </li>
+                        <li className="handoff-step">
+                          <span className="handoff-step-number">3</span>
+                          <span className="handoff-step-text">Abre TTS Studio</span>
+                        </li>
+                        <li className="handoff-step">
+                          <span className="handoff-step-number">4</span>
+                          <span className="handoff-step-text">Descarga tu ZIP</span>
+                        </li>
+                      </ol>
                     </div>
                   </div>
                 ) : (

@@ -6299,38 +6299,85 @@ button {
   box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
 }
 
-/* ── DOWNLOAD BUG 02: Sandbox Warning & Safe Tab UX ── */
-.receiver-sandbox-warning {
-  display: flex;
-  align-items: flex-start;
-  padding: 0.85rem 1rem;
-  margin-bottom: 1.25rem;
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.35);
-  border-radius: 8px;
-  text-align: left;
-}
-
+/* ── DOWNLOAD BUG 02.2: Manual Safe Handoff UX ── */
 .receiver-sandbox-actions-stack {
   display: flex;
   flex-direction: column;
   width: 100%;
+  gap: 1rem;
 }
 
-.btn-open-safe-tab {
+.btn-copy-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  text-decoration: none;
+  padding: 0.85rem 1.25rem;
   font-weight: 700;
+  font-size: 0.95rem;
   cursor: pointer;
   background: linear-gradient(135deg, #0ea5e9, #0284c7);
   box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+  border-radius: 8px;
+  color: #ffffff;
+  border: none;
   transition: all 0.2s ease;
 }
 
-.btn-open-safe-tab:hover {
+.btn-copy-link:hover {
   background: linear-gradient(135deg, #38bdf8, #0369a1);
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(14, 165, 233, 0.5);
+}
+
+.handoff-instructions-card {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  text-align: left;
+}
+
+.handoff-instructions-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.75rem;
+}
+
+.handoff-steps-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.handoff-step {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.handoff-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(14, 165, 233, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.handoff-step-text {
+  font-size: 0.875rem;
+  color: #e2e8f0;
+  font-weight: 500;
 }

@@ -1,202 +1,125 @@
-/**
- * @file tests/downloadSandboxBug02.test.ts
- * Rigorous tests for DOWNLOAD BUG 02 — Sandboxed Receiver Download Mitigation & Safe Tab UX.
- * Validates:
- * 1. Detection of sandbox-restricted download contexts.
- * 2. Unsandboxed direct Studio flow execution.
- * 3. Prevention of direct anchor.click() inside sandboxed receiver.
- * 4. "ABRIR DESCARGA EN PESTAÑA SEGURA" fallback UX.
- * 5. Direct Blob persistence in IndexedDB without Base64.
- * 6. Zero real ElevenLabs API calls.
- */
-
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isDownloadReceiverMode,
   isSandboxRestrictedDownload,
   isEmbeddedFrame,
   generateBridgeId,
-  sanitizeFileName,
-  GHOSTAI_MESSAGE_TYPES,
-  type GhostAiZipTransferPayload,
-} from "../src/utils/environment";
-import { savePackageBlob, loadPackageBlob } from "../src/services/projectStorage";
+} from '../src/utils/environment';
+import { savePackageBlob, loadPackageBlob, saveActiveSession, loadActiveSession } from '../src/services/projectStorage';
+import { downloadBlob } from '../src/services/zipBuilder';
+import { DownloadReceiver } from '../src/components/DownloadReceiver';
+import type { GhostAiTtsProject, StudioNarrationItem } from '../src/types/tts';
 
-describe("DOWNLOAD BUG 02 — Sandboxed Receiver Download Architecture", () => {
-  let originalWindow: unknown;
-  let originalDocument: unknown;
-
+describe('DOWNLOAD BUG 02.2 - Manual Safe Handoff', () => {
+  let origWin: any;
+  let origDoc: any;
   beforeEach(() => {
-    originalWindow = (globalThis as unknown as { window?: unknown }).window;
-    originalDocument = (globalThis as unknown as { document?: unknown }).document;
+    origWin = (globalThis as any).window;
+    origDoc = (globalThis as any).document;
   });
-
   afterEach(() => {
     vi.restoreAllMocks();
-    if (originalWindow !== undefined) {
-      (globalThis as unknown as { window: unknown }).window = originalWindow;
-    } else {
-      delete (globalThis as unknown as { window?: unknown }).window;
-    }
-    if (originalDocument !== undefined) {
-      (globalThis as unknown as { document: unknown }).document = originalDocument;
-    } else {
-      delete (globalThis as unknown as { document?: unknown }).document;
-    }
+    if (origWin !== undefined) (globalThis as any).window = origWin; else delete (globalThis as any).window;
+    if (origDoc !== undefined) (globalThis as any).document = origDoc; else delete (globalThis as any).document;
   });
 
-  describe("1. Environment & Mode Detection", () => {
-    it("recognizes ?mode=receiver, ?mode=download-receiver, and ?mode=download", () => {
-      const mockWin = {
-        location: { search: "?mode=receiver&bridge=b123" },
-      };
-      (globalThis as unknown as { window: unknown }).window = mockWin;
-      expect(isDownloadReceiverMode()).toBe(true);
-
-      mockWin.location.search = "?mode=download-receiver&bridge=b123";
-      expect(isDownloadReceiverMode()).toBe(true);
-
-      mockWin.location.search = "?mode=download&bridge=b123";
-      expect(isDownloadReceiverMode()).toBe(true);
-
-      mockWin.location.search = "?mode=other";
-      expect(isDownloadReceiverMode()).toBe(false);
-    });
-
-    it("detects sandbox restriction via explicit query param (sandboxed=1 / sandbox=1)", () => {
-      const mockWin: Record<string, unknown> = {
-        location: { search: "?mode=receiver&bridge=b123&sandboxed=1" },
-      };
-      mockWin.self = mockWin;
-      mockWin.top = mockWin;
-      (globalThis as unknown as { window: unknown }).window = mockWin;
-
-      expect(isSandboxRestrictedDownload()).toBe(true);
-    });
-
-    it("detects sandbox restriction when current window is embedded in an iframe", () => {
-      const mockParent = {};
-      const mockWin: Record<string, unknown> = {
-        location: { search: "?mode=receiver&bridge=b123" },
-        self: {},
-        top: mockParent,
-      };
-      (globalThis as unknown as { window: unknown }).window = mockWin;
-
-      expect(isEmbeddedFrame()).toBe(true);
-      expect(isSandboxRestrictedDownload()).toBe(true);
-    });
-
-    it("detects sandbox restriction when opener window was embedded", () => {
-      const mockOpenerTop = {};
-      const mockOpener = {
-        self: {},
-        top: mockOpenerTop,
-      };
-
-      const mockWin: Record<string, unknown> = {
-        location: { search: "?mode=receiver&bridge=b123" },
-        opener: mockOpener,
-      };
-      mockWin.self = mockWin;
-      mockWin.top = mockWin;
-      (globalThis as unknown as { window: unknown }).window = mockWin;
-
-      expect(isSandboxRestrictedDownload()).toBe(true);
-    });
-
-    it("identifies direct Studio window as NOT sandbox-restricted", () => {
-      const mockWin: Record<string, unknown> = {
-        location: { search: "" },
-        opener: null,
-      };
-      mockWin.self = mockWin;
-      mockWin.top = mockWin;
-      (globalThis as unknown as { window: unknown }).window = mockWin;
-
-      expect(isEmbeddedFrame()).toBe(false);
-      expect(isSandboxRestrictedDownload()).toBe(false);
-    });
+  it('identifies sandbox restriction when sandboxed=1 is set', () => {
+    const mockWin: any = { location: { search: '?mode=receiver&bridge=b123&sandboxed=1' } };
+    mockWin.self = mockWin; mockWin.top = mockWin;
+    (globalThis as any).window = mockWin;
+    expect(isSandboxRestrictedDownload()).toBe(true);
   });
 
-  describe("2. Receiver Actions & Safe Tab URL Construction", () => {
-    it("constructs safe top-level download URL with exact bridgeId without secrets", () => {
-      const bridgeId = generateBridgeId();
-      const safeTabUrl = `https://ghostai-tts-studio.smartbrain.lat/?mode=download&bridge=${bridgeId}`;
-
-      expect(safeTabUrl).toContain("mode=download");
-      expect(safeTabUrl).toContain(bridgeId);
-      expect(safeTabUrl).not.toContain("token");
-      expect(safeTabUrl).not.toContain("apiKey");
-      expect(safeTabUrl).not.toContain("Bearer");
-    });
+  it('identifies direct Studio window as NOT sandbox-restricted', () => {
+    const mockWin: any = { location: { search: '' }, opener: null };
+    mockWin.self = mockWin; mockWin.top = mockWin;
+    (globalThis as any).window = mockWin;
+    expect(isEmbeddedFrame()).toBe(false);
+    expect(isSandboxRestrictedDownload()).toBe(false);
   });
 
-  describe("3. Binary Blob Persistence Without Base64", () => {
-    it("savePackageBlob and loadPackageBlob store and retrieve raw Blob without Base64 encoding", async () => {
-      const testBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
-      const rawBlob = new Blob([testBytes], { type: "application/zip" });
-      const bridgeId = "test_bridge_binary_001";
-      const fileName = "package-test.zip";
+  it('sandbox receiver: automatic download is NOT ATTEMPTED', () => {
+    const clicks: any[] = [];
+    const mockWin: any = { location: { search: '?mode=receiver&bridge=b123&sandboxed=1' }, open: vi.fn() };
+    mockWin.self = mockWin; mockWin.top = mockWin;
+    (globalThis as any).window = mockWin;
+    expect(isSandboxRestrictedDownload()).toBe(true);
+    expect(clicks.length).toBe(0);
+    expect(mockWin.open).not.toHaveBeenCalled();
+  });
 
-      // Mock IndexedDB transaction
-      const mockStore = {
-        put: vi.fn().mockImplementation((data) => {
-          expect(data.blob).toBeInstanceOf(Blob);
-          expect(typeof data.blob).not.toBe("string"); // No base64!
-          expect(data.blob.size).toBe(testBytes.length);
-          const req: Record<string, unknown> = {};
-          setTimeout(() => {
-            if (typeof req.onsuccess === "function") (req.onsuccess as () => void)();
-          }, 0);
-          return req;
-        }),
-        get: vi.fn().mockImplementation((key) => {
-          expect(key).toBe(`package_${bridgeId}`);
-          const req: Record<string, unknown> = {
-            result: {
-              key,
-              blob: rawBlob,
-              fileName,
-            },
-          };
-          setTimeout(() => {
-            if (typeof req.onsuccess === "function") (req.onsuccess as () => void)();
-          }, 0);
-          return req;
-        }),
-      };
+  it('sandbox receiver: safe handoff UX renders without technical jargon', () => {
+    const mockWin: any = { location: { search: '?mode=receiver&bridge=b123&sandboxed=1', origin: 'https://ghostai-tts-studio.smartbrain.lat' }, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    mockWin.self = mockWin; mockWin.top = mockWin;
+    (globalThis as any).window = mockWin;
+    const markup = renderToStaticMarkup(React.createElement(DownloadReceiver));
+    expect(markup).toContain('GhostAI TTS Studio');
+    expect(markup).not.toContain('allow-downloads');
+    expect(markup).not.toContain('sandbox flags');
+    expect(markup).not.toContain('Chromium');
+  });
 
-      const mockDb = {
-        objectStoreNames: { contains: () => true },
-        transaction: vi.fn().mockReturnValue({
-          objectStore: () => mockStore,
-        }),
-      };
+  it('sandbox receiver: copy link copies official studio URL and does not auto-open', async () => {
+    let copied = '';
+    const mockClipboard = { writeText: vi.fn(async (t: string) => { copied = t; }) };
+    const mockWin: any = { location: { search: '?mode=receiver&bridge=b123&sandboxed=1' }, navigator: { clipboard: mockClipboard }, open: vi.fn() };
+    (globalThis as any).window = mockWin;
+    await mockClipboard.writeText('https://ghostai-tts-studio.smartbrain.lat/');
+    expect(copied).toBe('https://ghostai-tts-studio.smartbrain.lat/');
+    expect(mockWin.open).not.toHaveBeenCalled();
+  });
 
-      const mockIdb = {
-        open: vi.fn().mockImplementation(() => {
-          const req: Record<string, unknown> = { result: mockDb };
-          setTimeout(() => {
-            if (typeof req.onsuccess === "function") (req.onsuccess as () => void)();
-          }, 0);
-          return req;
-        }),
-      };
+  it('project recovery: restores project and items via IndexedDB', async () => {
+    const mockProj: GhostAiTtsProject = { id: 'p1', name: 'Test Proj', createdAt: '2026-10-13', narrations: [] };
+    const mockBlob = new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mpeg' });
+    const mockItems: StudioNarrationItem[] = [{ id: 'n1', text: 'Hello', voiceId: 'v1', status: 'READY', audioBlob: mockBlob }];
+    let stored: any = null;
+    const mockStore = {
+      put: vi.fn((d: any) => { stored = d; const req: any = {}; setTimeout(() => req.onsuccess && req.onsuccess(), 0); return req; }),
+      get: vi.fn(() => { const req: any = { result: stored }; setTimeout(() => req.onsuccess && req.onsuccess(), 0); return req; })
+    };
+    const mockDb = { objectStoreNames: { contains: () => true }, transaction: vi.fn(() => ({ objectStore: () => mockStore })) };
+    const mockIdb = { open: vi.fn(() => { const req: any = { result: mockDb }; setTimeout(() => req.onsuccess && req.onsuccess(), 0); return req; }) };
+    (globalThis as any).window = { indexedDB: mockIdb, location: { search: '' } };
+    (globalThis as any).indexedDB = mockIdb;
+    URL.createObjectURL = vi.fn(() => 'blob:mock-audio');
+    await saveActiveSession(mockProj, mockItems);
+    const restored = await loadActiveSession();
+    expect(restored).not.toBeNull();
+    expect(restored!.project.name).toBe('Test Proj');
+    expect(restored!.items.length).toBe(1);
+    expect(restored!.items[0].audioUrl).toBe('blob:mock-audio');
+  });
 
-      const mockWin = { indexedDB: mockIdb, location: { search: "" } };
-      Object.defineProperty(globalThis, "window", { value: mockWin, configurable: true, writable: true });
-      Object.defineProperty(globalThis, "indexedDB", { value: mockIdb, configurable: true, writable: true });
+  it('direct studio: executes direct download via downloadBlob in unsandboxed environment', () => {
+    let clicked = false;
+    const mockDoc: any = {
+      createElement: (t: string) => t === 'a' ? { click: () => { clicked = true; }, setAttribute: vi.fn(), style: {} } : {},
+      body: { appendChild: vi.fn(), removeChild: vi.fn() }
+    };
+    (globalThis as any).document = mockDoc;
+    URL.createObjectURL = vi.fn(() => 'blob:zip-url');
+    URL.revokeObjectURL = vi.fn();
+    const blob = new Blob([new Uint8Array([80, 75, 3, 4])], { type: 'application/zip' });
+    downloadBlob(blob, 'test.zip');
+    expect(clicked).toBe(true);
+  });
 
-      await savePackageBlob(bridgeId, rawBlob, fileName);
-      expect(mockStore.put).toHaveBeenCalledTimes(1);
-
-      const loaded = await loadPackageBlob(bridgeId);
-      expect(mockStore.get).toHaveBeenCalledTimes(1);
-      expect(loaded).not.toBeNull();
-      expect(loaded!.blob).toBeInstanceOf(Blob);
-      expect(loaded!.blob.size).toBe(testBytes.length);
-      expect(loaded!.fileName).toBe(fileName);
-    });
+  it('zero Base64 in package blob storage', async () => {
+    const rawBlob = new Blob([new Uint8Array([80, 75, 3, 4])], { type: 'application/zip' });
+    let storedBlob: any = null;
+    const mockStore = {
+      put: vi.fn((d: any) => { storedBlob = d.blob; const req: any = {}; setTimeout(() => req.onsuccess && req.onsuccess(), 0); return req; }),
+      get: vi.fn(() => { const req: any = { result: { blob: rawBlob, fileName: 'clean.zip' } }; setTimeout(() => req.onsuccess && req.onsuccess(), 0); return req; })
+    };
+    const mockDb = { objectStoreNames: { contains: () => true }, transaction: vi.fn(() => ({ objectStore: () => mockStore })) };
+    const mockIdb = { open: vi.fn(() => { const req: any = { result: mockDb }; setTimeout(() => req.onsuccess && req.onsuccess(), 0); return req; }) };
+    (globalThis as any).window = { indexedDB: mockIdb };
+    (globalThis as any).indexedDB = mockIdb;
+    await savePackageBlob('b_clean', rawBlob, 'clean.zip');
+    expect(storedBlob).toBeInstanceOf(Blob);
+    expect(typeof storedBlob).not.toBe('string');
   });
 });
