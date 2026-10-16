@@ -3,12 +3,18 @@
  * Private Administrative Console for GhostAI Access Control, Member Management & TTS Operations.
  * Isolated from normal Studio user views.
  *
- * Implements GHOSTAI MEMBER ACCESS 01:
- *  - Bulk Member Import (.xlsx / .csv) with live validation preview & duplicate detection
- *  - Individual key management & cryptographic invitation links
- *  - Individual member controls: renew (+1M / +1Y), revoke, regenerate key, resend invite
- *  - Ready-to-send email payloads (zero real emails sent)
- *  - Detailed audit inspect modals
+ * Implements:
+ *  - GHOSTAI MEMBER ACCESS 01: Bulk Member Import (.xlsx / .csv), cryptographic keys, renewal & revocation.
+ *  - GHOSTAI ADMIN USERS + EMAIL EXPERIENCE 02:
+ *      * Multi-Admin RBAC (OWNER vs ADMIN).
+ *      * Dedicated ADMINISTRADORES and AUDITORÍA tabs for OWNER.
+ *      * One-time cryptographic activation link generation for partner/new admins.
+ *      * Last active OWNER deactivation protection.
+ *      * Full Email HTML Preview (sandboxed iframe + plain text toggle).
+ *      * Single & Bulk sending with duplicate-click protection ("ENVIANDO...").
+ *      * Per-member email delivery status (NO ENVIADA, ENVIADA, ACTIVADO, ERROR).
+ *      * Individual batch safety with isolated execution.
+ *      * Zero permanent GhostAI keys in email bodies.
  */
 
 import React, { useState, useEffect, useRef } from "react";
@@ -34,11 +40,13 @@ import {
   X,
   Send,
   CheckCircle2,
+  Crown,
+  FileText,
 } from "lucide-react";
 import {
   loginAdmin,
   logoutAdmin,
-  checkAdminStatus,
+  fetchAdminSession,
   fetchAdminClients,
   createAdminClient,
   updateAdminClientStatus,
@@ -51,14 +59,24 @@ import {
   bulkCreateAdminMembers,
   renewAdminMember,
   revokeAdminMember,
-  inviteAdminMember,
   regenerateAdminMemberKey,
+  fetchAdminUsers,
+  inviteAdminUser,
+  updateAdminUserStatus,
+  fetchAdminAuditLogs,
+  previewMemberEmail,
+  sendMemberInvitations,
   type AdminClient,
   type AdminToken,
   type AdminTtsSession,
   type AdminMember,
   type BulkImportResponse,
   type EmailPayload,
+  type AdminUserIdentity,
+  type AdminUser,
+  type AdminAuditLog,
+  type EmailPreviewData,
+  type SendInvitationResult,
 } from "../../services/adminService";
 import {
   parseCsv,
@@ -74,10 +92,14 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }) => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [adminUser, setAdminUser] = useState<AdminUserIdentity | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"members" | "clients" | "tokens" | "operations">("members");
+  const [activeTab, setActiveTab] = useState<"members" | "admins" | "audit" | "clients" | "tokens" | "operations">("members");
 
   // Login form state
+  const [loginMode, setLoginMode] = useState<"token" | "credentials">("token");
+  const [loginEmail, setLoginEmail] = useState<string>("");
+  const [loginPassword, setLoginPassword] = useState<string>("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const loginInputRef = useRef<HTMLInputElement>(null);
@@ -87,6 +109,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [clients, setClients] = useState<AdminClient[]>([]);
   const [tokens, setTokens] = useState<AdminToken[]>([]);
   const [operations, setOperations] = useState<AdminTtsSession[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
 
   // Member search & filters
@@ -101,7 +125,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [bulkParsing, setBulkParsing] = useState<boolean>(false);
   const [bulkParseError, setBulkParseError] = useState<string | null>(null);
   const [bulkValidation, setBulkValidation] = useState<ValidationSummary | null>(null);
-  const [bulkConfirming, setBulkConfirming] = useState<boolean>(false);
   const [bulkImporting, setBulkImporting] = useState<boolean>(false);
   const [bulkImportResult, setBulkImportResult] = useState<BulkImportResponse | null>(null);
 
@@ -123,10 +146,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [detailTarget, setDetailTarget] = useState<AdminMember | null>(null);
   const [generatedInvite, setGeneratedInvite] = useState<{ link: string; payload: EmailPayload } | null>(null);
 
-  const [batchInvitesResult, setBatchInvitesResult] = useState<{
-    sentCount: number;
-    invitations: Array<{ memberId: string; activationLink: string; emailPayload: EmailPayload }>;
-  } | null>(null);
+  // Email Experience 02 Modals & States
+  const [previewTarget, setPreviewTarget] = useState<AdminMember | null>(null);
+  const [previewData, setPreviewData] = useState<EmailPreviewData | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
+  const [previewViewMode, setPreviewViewMode] = useState<"html" | "text">("html");
+  const [isSendingFromPreview, setIsSendingFromPreview] = useState<boolean>(false);
+
+  const [showBulkSendConfirm, setShowBulkSendConfirm] = useState<boolean>(false);
+  const [isBulkSending, setIsBulkSending] = useState<boolean>(false);
+  const [bulkSendSummary, setBulkSendSummary] = useState<SendInvitationResult | null>(null);
+  const [sendingMemberId, setSendingMemberId] = useState<string | null>(null);
+
+  // Admin Management Modals (OWNER Only)
+  const [showInviteAdminModal, setShowInviteAdminModal] = useState<boolean>(false);
+  const [newAdminName, setNewAdminName] = useState<string>("");
+  const [newAdminEmail, setNewAdminEmail] = useState<string>("");
+  const [newAdminRole, setNewAdminRole] = useState<"admin" | "owner">("admin");
+  const [isInvitingAdmin, setIsInvitingAdmin] = useState<boolean>(false);
+  const [createdAdminInvite, setCreatedAdminInvite] = useState<{ link: string; token: string; name: string } | null>(null);
+  const [isUpdatingAdminId, setIsUpdatingAdminId] = useState<string | null>(null);
 
   // Legacy Modals
   const [showClientModal, setShowClientModal] = useState<boolean>(false);
@@ -143,13 +182,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // 1. Initial Auth Check
   useEffect(() => {
-    checkAdminStatus()
-      .then((authed) => {
-        setIsAuthenticated(authed);
+    fetchAdminSession()
+      .then((session) => {
+        setIsAuthenticated(session.authenticated);
+        setAdminUser(session.admin || null);
         setLoading(false);
       })
       .catch(() => {
         setIsAuthenticated(false);
+        setAdminUser(null);
         setLoading(false);
       });
   }, []);
@@ -161,6 +202,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       if (activeTab === "members") {
         const data = await fetchAdminMembers();
         setMembers(data);
+      } else if (activeTab === "admins" && adminUser?.role === "owner") {
+        const users = await fetchAdminUsers();
+        setAdminUsers(users);
+      } else if (activeTab === "audit" && adminUser?.role === "owner") {
+        const logs = await fetchAdminAuditLogs();
+        setAuditLogs(logs);
       } else if (activeTab === "clients") {
         const data = await fetchAdminClients();
         setClients(data);
@@ -185,26 +232,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   // 3. Handle Login
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const tokenVal = loginInputRef.current?.value || "";
-    if (!tokenVal.trim()) return;
-
     setIsLoggingIn(true);
     setLoginError(null);
 
     try {
-      const ok = await loginAdmin(tokenVal.trim());
-      if (loginInputRef.current) {
-        loginInputRef.current.value = "";
+      let ok = false;
+      if (loginMode === "token") {
+        const tokenVal = loginInputRef.current?.value || "";
+        if (!tokenVal.trim()) return;
+        ok = await loginAdmin(tokenVal.trim());
+        if (loginInputRef.current) loginInputRef.current.value = "";
+      } else {
+        if (!loginEmail.trim() || !loginPassword) return;
+        ok = await loginAdmin({ email: loginEmail.trim(), password: loginPassword });
+        setLoginPassword("");
       }
+
       if (ok) {
+        const session = await fetchAdminSession();
+        setAdminUser(session.admin || null);
         setIsAuthenticated(true);
       } else {
         setLoginError("Credencial administrativa inválida.");
       }
     } catch (err) {
-      if (loginInputRef.current) {
-        loginInputRef.current.value = "";
-      }
+      if (loginInputRef.current) loginInputRef.current.value = "";
+      setLoginPassword("");
       setLoginError((err as Error).message);
     } finally {
       setIsLoggingIn(false);
@@ -215,10 +268,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const handleLogout = async () => {
     await logoutAdmin();
     setIsAuthenticated(false);
+    setAdminUser(null);
     setMembers([]);
     setClients([]);
     setTokens([]);
     setOperations([]);
+    setAdminUsers([]);
+    setAuditLogs([]);
   };
 
   // ── Legacy Client Handlers ────────────────────────────────────────────────
@@ -327,7 +383,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     setDataError(null);
 
     try {
-      // Send valid rows to gateway
       const validRowsToCreate = bulkValidation.rows
         .filter((r) => r.isValid)
         .map((r) => ({
@@ -338,7 +393,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
       const res = await bulkCreateAdminMembers(validRowsToCreate);
       setBulkImportResult(res);
-      setBulkConfirming(false);
       await loadData();
     } catch (err) {
       setDataError((err as Error).message);
@@ -407,21 +461,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   };
 
   // ── Member Invitation & Regenerate ────────────────────────────────────────
-  const handleResendInvite = async (member: AdminMember) => {
-    try {
-      const res = await inviteAdminMember(member.id);
-      if (res.invitations.length > 0) {
-        setGeneratedInvite({
-          link: res.invitations[0].activationLink,
-          payload: res.invitations[0].emailPayload,
-        });
-      }
-      await loadData();
-    } catch (err) {
-      setDataError((err as Error).message);
-    }
-  };
-
   const handleRegenerateKey = async (member: AdminMember) => {
     if (!window.confirm(`¿Regenerar GhostAI Key para '${member.name}'? La key actual será revocada y se generará una nueva.`)) {
       return;
@@ -438,15 +477,126 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     }
   };
 
-  const handleBatchInviteSelected = async () => {
-    if (selectedMemberIds.size === 0) return;
+  // ── EMAIL EXPERIENCE 02 HANDLERS ─────────────────────────────────────────
+
+  // 1. Preview Email Modal
+  const handleOpenEmailPreview = async (member: AdminMember) => {
+    setPreviewTarget(member);
+    setLoadingPreview(true);
+    setDataError(null);
     try {
-      const res = await inviteAdminMember(Array.from(selectedMemberIds));
-      setBatchInvitesResult(res);
-      setSelectedMemberIds(new Set());
+      const data = await previewMemberEmail(member.id);
+      setPreviewData(data);
+    } catch (err) {
+      setDataError((err as Error).message);
+      setPreviewTarget(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  // 2. Send Invitation from Preview Modal
+  const handleSendFromPreview = async () => {
+    if (!previewTarget) return;
+    setIsSendingFromPreview(true);
+    setDataError(null);
+    try {
+      const res = await sendMemberInvitations(previewTarget.id);
+      setPreviewTarget(null);
+      setPreviewData(null);
+      setBulkSendSummary(res);
       await loadData();
     } catch (err) {
       setDataError((err as Error).message);
+    } finally {
+      setIsSendingFromPreview(false);
+    }
+  };
+
+  // 3. Single Send directly from Table
+  const handleSendSingleDirect = async (member: AdminMember) => {
+    setSendingMemberId(member.id);
+    setDataError(null);
+    try {
+      const res = await sendMemberInvitations(member.id);
+      setBulkSendSummary(res);
+      await loadData();
+    } catch (err) {
+      setDataError((err as Error).message);
+    } finally {
+      setSendingMemberId(null);
+    }
+  };
+
+  // 4. Bulk Send Execution (with Rate/Duplicate Click Protection)
+  const handleConfirmBulkSend = async () => {
+    if (selectedMemberIds.size === 0 || isBulkSending) return;
+    setIsBulkSending(true);
+    setDataError(null);
+    try {
+      const res = await sendMemberInvitations(Array.from(selectedMemberIds));
+      setShowBulkSendConfirm(false);
+      setSelectedMemberIds(new Set());
+      setBulkSendSummary(res);
+      await loadData();
+    } catch (err) {
+      setDataError((err as Error).message);
+    } finally {
+      setIsBulkSending(false);
+    }
+  };
+
+  // ── OWNER ADMIN MANAGEMENT HANDLERS ───────────────────────────────────────
+  const handleInviteAdminSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminName.trim() || !newAdminEmail.trim()) return;
+
+    setIsInvitingAdmin(true);
+    setDataError(null);
+    try {
+      const res = await inviteAdminUser(newAdminName.trim(), newAdminEmail.trim(), newAdminRole);
+      setCreatedAdminInvite({
+        link: res.activationLink,
+        token: res.activationToken,
+        name: res.adminUser.name,
+      });
+      setShowInviteAdminModal(false);
+      setNewAdminName("");
+      setNewAdminEmail("");
+      setNewAdminRole("admin");
+      await loadData();
+    } catch (err) {
+      setDataError((err as Error).message);
+    } finally {
+      setIsInvitingAdmin(false);
+    }
+  };
+
+  const handleToggleAdminStatus = async (admin: AdminUser) => {
+    const nextStatus = admin.status === "active" ? "disabled" : "active";
+
+    // Validate if trying to disable last owner
+    if (nextStatus === "disabled" && admin.role === "owner") {
+      const activeOwners = adminUsers.filter((u) => u.role === "owner" && u.status === "active");
+      if (activeOwners.length <= 1) {
+        alert("Protección de Seguridad: No es posible desactivar al único Owner activo del sistema.");
+        return;
+      }
+    }
+
+    if (!window.confirm(`¿Confirmas ${nextStatus === "active" ? "reactivar" : "desactivar"} a '${admin.name}'?`)) {
+      return;
+    }
+
+    setIsUpdatingAdminId(admin.id);
+    setDataError(null);
+    try {
+      await updateAdminUserStatus(admin.id, nextStatus);
+      await loadData();
+    } catch (err) {
+      setDataError((err as Error).message);
+    } finally {
+      setIsUpdatingAdminId(null);
     }
   };
 
@@ -496,6 +646,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     setSelectedMemberIds(next);
   };
 
+  // Helper for Member Email Status Badge
+  const renderEmailStatusBadge = (m: AdminMember) => {
+    if (m.status === "active") {
+      return (
+        <div>
+          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", letterSpacing: "0.03em" }}>
+            ACTIVADO
+          </span>
+          {m.activated_at && (
+            <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "0.15rem" }}>
+              {new Date(m.activated_at).toLocaleDateString()}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const emailStatus = m.last_email_status || (m.status === "invited" ? "sent" : "not_sent");
+
+    if (emailStatus === "sent") {
+      return (
+        <div>
+          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", letterSpacing: "0.03em" }}>
+            ENVIADA
+          </span>
+          {m.last_email_sent_at && (
+            <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "0.15rem" }}>
+              {new Date(m.last_email_sent_at).toLocaleDateString()}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (emailStatus === "failed") {
+      return (
+        <div>
+          <span
+            title={m.last_email_error || "Error en el envío"}
+            style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(244, 63, 94, 0.15)", color: "#fda4af", letterSpacing: "0.03em", cursor: "help" }}
+          >
+            ERROR
+          </span>
+          <div style={{ fontSize: "0.7rem", color: "#fda4af", marginTop: "0.15rem", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {m.last_email_error || "Fallo"}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "700", background: "#1e293b", color: "#64748b", letterSpacing: "0.03em" }}>
+        NO ENVIADA
+      </span>
+    );
+  };
+
   // Loading Screen
   if (loading) {
     return (
@@ -518,6 +725,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             <p style={{ fontSize: "0.85rem", color: "#94a3b8", margin: 0 }}>Consola de gestión de miembros y control de acceso</p>
           </div>
 
+          {/* Login Mode Tabs */}
+          <div style={{ display: "flex", background: "#080c14", padding: "0.25rem", borderRadius: "8px", marginBottom: "1.25rem" }}>
+            <button
+              type="button"
+              onClick={() => setLoginMode("token")}
+              style={{ flex: 1, padding: "0.45rem", border: "none", borderRadius: "6px", background: loginMode === "token" ? "#1e293b" : "none", color: loginMode === "token" ? "#38bdf8" : "#64748b", fontWeight: "600", fontSize: "0.8rem", cursor: "pointer" }}
+            >
+              Master Token
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginMode("credentials")}
+              style={{ flex: 1, padding: "0.45rem", border: "none", borderRadius: "6px", background: loginMode === "credentials" ? "#1e293b" : "none", color: loginMode === "credentials" ? "#38bdf8" : "#64748b", fontWeight: "600", fontSize: "0.8rem", cursor: "pointer" }}
+            >
+              Email & Contraseña
+            </button>
+          </div>
+
           {loginError && (
             <div style={{ background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", color: "#fda4af", fontSize: "0.85rem", marginBottom: "1rem" }}>
               {loginError}
@@ -525,24 +750,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           )}
 
           <form onSubmit={handleLoginSubmit}>
-            <div style={{ marginBottom: "1.25rem" }}>
-              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: "600", color: "#cbd5e1", marginBottom: "0.5rem" }}>
-                Admin Auth Credential
-              </label>
-              <div style={{ position: "relative" }}>
+            {loginMode === "token" ? (
+              <div style={{ marginBottom: "1.25rem" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: "600", color: "#cbd5e1", marginBottom: "0.5rem" }}>
+                  Master Auth Token
+                </label>
                 <input
                   ref={loginInputRef}
                   type="password"
-                  placeholder="Introduce la credencial administrativa"
+                  placeholder="Introduce la credencial maestra"
                   autoComplete="off"
                   style={{ width: "100%", padding: "0.65rem 0.85rem", background: "#080c14", border: "1px solid #334155", borderRadius: "8px", color: "#f8fafc", fontSize: "0.9rem", boxSizing: "border-box" }}
                   required
                 />
+                <p style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "0.4rem" }}>
+                  Se emitirá una sesión HttpOnly temporal con rol de Administrador.
+                </p>
               </div>
-              <p style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "0.4rem" }}>
-                La credencial no se almacena en el navegador; se emite una sesión HttpOnly temporal.
-              </p>
-            </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: "1rem" }}>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: "600", color: "#cbd5e1", marginBottom: "0.4rem" }}>
+                    Correo Electrónico
+                  </label>
+                  <input
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="admin@ghostai.app"
+                    autoComplete="email"
+                    style={{ width: "100%", padding: "0.65rem 0.85rem", background: "#080c14", border: "1px solid #334155", borderRadius: "8px", color: "#f8fafc", fontSize: "0.9rem", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+                <div style={{ marginBottom: "1.25rem" }}>
+                  <label style={{ display: "block", fontSize: "0.8rem", fontWeight: "600", color: "#cbd5e1", marginBottom: "0.4rem" }}>
+                    Contraseña
+                  </label>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="Tu contraseña personal"
+                    autoComplete="current-password"
+                    style={{ width: "100%", padding: "0.65rem 0.85rem", background: "#080c14", border: "1px solid #334155", borderRadius: "8px", color: "#f8fafc", fontSize: "0.9rem", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+              </>
+            )}
 
             <button
               type="submit"
@@ -579,10 +835,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           >
             <ArrowLeft size={14} /> Volver a Studio
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <Shield className="text-cyan-400" size={20} />
             <span style={{ fontWeight: "800", fontSize: "1.1rem", letterSpacing: "0.05em", color: "#f8fafc" }}>GHOSTAI ADMIN</span>
-            <span style={{ fontSize: "0.75rem", padding: "0.15rem 0.5rem", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", borderRadius: "4px", fontWeight: "600" }}>MEMBER ACCESS 01</span>
+            
+            {/* Role Badge */}
+            {adminUser?.role === "owner" ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.75rem", padding: "0.15rem 0.6rem", background: "linear-gradient(135deg, rgba(168, 85, 247, 0.25) 0%, rgba(99, 102, 241, 0.25) 100%)", border: "1px solid #a855f7", color: "#c084fc", borderRadius: "4px", fontWeight: "800", letterSpacing: "0.04em" }}>
+                <Crown size={12} /> OWNER
+              </span>
+            ) : (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.75rem", padding: "0.15rem 0.6rem", background: "rgba(56, 189, 248, 0.15)", border: "1px solid #38bdf8", color: "#38bdf8", borderRadius: "4px", fontWeight: "700" }}>
+                ADMIN
+              </span>
+            )}
+
+            {/* Admin identity display */}
+            <span style={{ fontSize: "0.8rem", color: "#94a3b8", marginLeft: "0.25rem" }}>
+              {adminUser?.name || adminUser?.email || "Master"}
+            </span>
           </div>
         </div>
 
@@ -599,28 +870,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       {/* Main Content Area */}
       <div style={{ maxWidth: "1280px", width: "100%", margin: "0 auto", padding: "1.5rem", flex: 1 }}>
         {/* Navigation Tabs */}
-        <div style={{ display: "flex", gap: "0.5rem", borderBottom: "1px solid #1e293b", marginBottom: "1.5rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem", borderBottom: "1px solid #1e293b", marginBottom: "1.5rem", overflowX: "auto" }}>
           <button
             onClick={() => setActiveTab("members")}
-            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "members" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "members" ? "#38bdf8" : "#94a3b8", fontWeight: "700", cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "members" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "members" ? "#38bdf8" : "#94a3b8", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Users size={16} /> MIEMBROS ({members.length})
           </button>
+
+          {/* Tab: ADMINISTRADORES (Visible ONLY to OWNER) */}
+          {adminUser?.role === "owner" && (
+            <button
+              onClick={() => setActiveTab("admins")}
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "admins" ? "2px solid #a855f7" : "2px solid transparent", color: activeTab === "admins" ? "#c084fc" : "#94a3b8", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              <Crown size={16} /> ADMINISTRADORES ({adminUsers.length})
+            </button>
+          )}
+
+          {/* Tab: AUDITORÍA (Visible ONLY to OWNER) */}
+          {adminUser?.role === "owner" && (
+            <button
+              onClick={() => setActiveTab("audit")}
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "audit" ? "2px solid #a855f7" : "2px solid transparent", color: activeTab === "audit" ? "#c084fc" : "#94a3b8", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              <FileText size={16} /> AUDITORÍA ({auditLogs.length})
+            </button>
+          )}
+
           <button
             onClick={() => setActiveTab("clients")}
-            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "clients" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "clients" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "clients" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "clients" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Users size={16} /> CLIENTES ({clients.length})
           </button>
           <button
             onClick={() => setActiveTab("tokens")}
-            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "tokens" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "tokens" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "tokens" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "tokens" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Key size={16} /> TOKENS ({tokens.length})
           </button>
           <button
             onClick={() => setActiveTab("operations")}
-            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "operations" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "operations" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer" }}
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "operations" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "operations" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Activity size={16} /> OPERACIÓN TTS ({operations.length})
           </button>
@@ -676,10 +968,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                 {selectedMemberIds.size > 0 && (
                   <button
-                    onClick={handleBatchInviteSelected}
-                    style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: "pointer" }}
+                    onClick={() => setShowBulkSendConfirm(true)}
+                    style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "linear-gradient(135deg, #0284c7 0%, #38bdf8 100%)", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: "pointer" }}
                   >
-                    <Send size={15} /> ENVIAR {selectedMemberIds.size} INVITACIONES
+                    <Send size={15} /> ENVIAR INVITACIONES ({selectedMemberIds.size})
                   </button>
                 )}
 
@@ -706,8 +998,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             </div>
 
             {/* Members Table */}
-            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem", minWidth: "1000px" }}>
                 <thead>
                   <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left" }}>
                     <th style={{ width: "36px", padding: "0.75rem 0.5rem 0.75rem 1rem" }}>
@@ -722,9 +1014,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                     <th style={{ padding: "0.75rem 0.75rem" }}>Correo</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Plan</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Estado</th>
+                    <th style={{ padding: "0.75rem 0.75rem" }}>Estado Correo</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Key</th>
-                    <th style={{ padding: "0.75rem 0.75rem" }}>Invitación</th>
-                    <th style={{ padding: "0.75rem 0.75rem" }}>Activado</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Vence</th>
                     <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Acciones</th>
                   </tr>
@@ -732,18 +1023,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 <tbody>
                   {filteredMembers.length === 0 ? (
                     <tr>
-                      <td colSpan={10} style={{ padding: "3rem", textAlign: "center", color: "#64748b" }}>
+                      <td colSpan={9} style={{ padding: "3rem", textAlign: "center", color: "#64748b" }}>
                         No se encontraron miembros registrados. Haz clic en "IMPORTAR MIEMBROS" para cargar la lista.
                       </td>
                     </tr>
                   ) : (
                     filteredMembers.map((m) => {
                       const isSelected = selectedMemberIds.has(m.id);
+                      const isSending = sendingMemberId === m.id;
                       const maskedKey = m.tokenPublicId
                         ? `gai_live_${m.tokenPublicId.slice(0, 4)}••••`
                         : "GHOSTAI-••••-ABCD";
 
-                      // Status colors
+                      // Member Status badge
                       const statusBadge = {
                         pending: { bg: "rgba(148, 163, 184, 0.15)", text: "#94a3b8" },
                         invited: { bg: "rgba(56, 189, 248, 0.15)", text: "#38bdf8" },
@@ -803,26 +1095,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                               {m.status.toUpperCase()}
                             </span>
                           </td>
+                          <td style={{ padding: "0.75rem 0.75rem" }}>
+                            {renderEmailStatusBadge(m)}
+                          </td>
                           <td style={{ padding: "0.75rem 0.75rem", fontFamily: "monospace", fontSize: "0.8rem", color: "#94a3b8" }}>
                             {maskedKey}
-                          </td>
-                          <td style={{ padding: "0.75rem 0.75rem", color: "#94a3b8", fontSize: "0.8rem" }}>
-                            {m.invited_at ? new Date(m.invited_at).toLocaleDateString() : "No enviada"}
-                          </td>
-                          <td style={{ padding: "0.75rem 0.75rem", color: "#94a3b8", fontSize: "0.8rem" }}>
-                            {m.activated_at ? new Date(m.activated_at).toLocaleDateString() : "Pendiente"}
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem", color: "#cbd5e1", fontSize: "0.8rem" }}>
                             {m.expires_at ? new Date(m.expires_at).toLocaleDateString() : "—"}
                           </td>
                           <td style={{ padding: "0.75rem 1rem", textAlign: "right" }}>
                             <div style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
+                              {/* Preview Email Button */}
                               <button
-                                onClick={() => handleResendInvite(m)}
-                                title="Reenviar Invitación / Generar enlace"
-                                style={{ padding: "0.3rem 0.5rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#38bdf8", fontSize: "0.75rem", cursor: "pointer" }}
+                                onClick={() => handleOpenEmailPreview(m)}
+                                title="Previsualizar correo HTML de invitación"
+                                style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", padding: "0.3rem 0.5rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#38bdf8", fontSize: "0.75rem", cursor: "pointer" }}
                               >
-                                Invitar
+                                <Eye size={12} />
+                                <span>Ver Email</span>
+                              </button>
+
+                              {/* Direct Send Invitation Button */}
+                              <button
+                                onClick={() => handleSendSingleDirect(m)}
+                                disabled={isSending}
+                                title="Enviar invitación por correo ahora"
+                                style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", padding: "0.3rem 0.5rem", background: "#0284c7", border: "none", borderRadius: "4px", color: "#ffffff", fontSize: "0.75rem", cursor: isSending ? "not-allowed" : "pointer" }}
+                              >
+                                {isSending ? <RefreshCw className="animate-spin" size={12} /> : <Send size={12} />}
+                                <span>{isSending ? "Enviando..." : "Enviar"}</span>
                               </button>
 
                               <button
@@ -847,19 +1149,185 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                               ) : (
                                 <span style={{ fontSize: "0.75rem", color: "#f43f5e" }}>Revocado</span>
                               )}
-
-                              <button
-                                onClick={() => setDetailTarget(m)}
-                                title="Ver detalles"
-                                style={{ padding: "0.3rem 0.5rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#94a3b8", fontSize: "0.75rem", cursor: "pointer" }}
-                              >
-                                <Eye size={13} />
-                              </button>
                             </div>
                           </td>
                         </tr>
                       );
                     })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB: ADMINISTRADORES (Visible ONLY to OWNER) ───────────────── */}
+        {activeTab === "admins" && adminUser?.role === "owner" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+              <div>
+                <h2 style={{ fontSize: "1.2rem", margin: 0, fontWeight: "700", color: "#f8fafc", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <Crown className="text-purple-400" size={20} /> Gestión de Administradores
+                </h2>
+                <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "#94a3b8" }}>
+                  Control de roles RBAC (Owner / Admin) y generación de invitaciones de un solo uso.
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setCreatedAdminInvite(null);
+                  setShowInviteAdminModal(true);
+                }}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "linear-gradient(135deg, #a855f7 0%, #6366f1 100%)", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: "pointer" }}
+              >
+                <Plus size={16} /> INVITAR ADMINISTRADOR
+              </button>
+            </div>
+
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                <thead>
+                  <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left" }}>
+                    <th style={{ padding: "0.75rem 1rem" }}>Nombre</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Correo</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Rol</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Estado</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Creado / Invitado</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Último Acceso</th>
+                    <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminUsers.map((u) => {
+                    const isLastActiveOwner =
+                      u.role === "owner" &&
+                      u.status === "active" &&
+                      adminUsers.filter((a) => a.role === "owner" && a.status === "active").length <= 1;
+
+                    const roleBadge = u.role === "owner"
+                      ? { bg: "rgba(168, 85, 247, 0.15)", text: "#c084fc", label: "OWNER" }
+                      : { bg: "rgba(56, 189, 248, 0.15)", text: "#38bdf8", label: "ADMIN" };
+
+                    const statusBadge = {
+                      active: { bg: "rgba(16, 185, 129, 0.15)", text: "#34d399", label: "ACTIVO" },
+                      pending: { bg: "rgba(245, 158, 11, 0.15)", text: "#fbbf24", label: "PENDIENTE" },
+                      disabled: { bg: "rgba(244, 63, 94, 0.15)", text: "#fda4af", label: "DESACTIVADO" },
+                    }[u.status] || { bg: "#1e293b", text: "#94a3b8", label: u.status };
+
+                    return (
+                      <tr key={u.id} style={{ borderTop: "1px solid #1e293b" }}>
+                        <td style={{ padding: "0.75rem 1rem", fontWeight: "700", color: "#f8fafc" }}>{u.name}</td>
+                        <td style={{ padding: "0.75rem 1rem", color: "#94a3b8" }}>{u.email}</td>
+                        <td style={{ padding: "0.75rem 1rem" }}>
+                          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "bold", background: roleBadge.bg, color: roleBadge.text }}>
+                            {roleBadge.label}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem" }}>
+                          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "bold", background: statusBadge.bg, color: statusBadge.text }}>
+                            {statusBadge.label}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem", color: "#94a3b8" }}>{new Date(u.created_at).toLocaleDateString()}</td>
+                        <td style={{ padding: "0.75rem 1rem", color: "#94a3b8" }}>
+                          {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "Nunca"}
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem", textAlign: "right" }}>
+                          {u.status === "active" ? (
+                            <button
+                              onClick={() => handleToggleAdminStatus(u)}
+                              disabled={isLastActiveOwner || isUpdatingAdminId === u.id}
+                              title={isLastActiveOwner ? "No es posible desactivar al único Owner activo del sistema" : "Desactivar acceso"}
+                              style={{ padding: "0.25rem 0.6rem", background: isLastActiveOwner ? "#1e293b" : "rgba(244, 63, 94, 0.15)", border: `1px solid ${isLastActiveOwner ? "#334155" : "#f43f5e"}`, borderRadius: "4px", color: isLastActiveOwner ? "#64748b" : "#fda4af", fontSize: "0.75rem", cursor: isLastActiveOwner ? "not-allowed" : "pointer" }}
+                            >
+                              {isUpdatingAdminId === u.id ? "Procesando..." : "Desactivar"}
+                            </button>
+                          ) : u.status === "disabled" ? (
+                            <button
+                              onClick={() => handleToggleAdminStatus(u)}
+                              disabled={isUpdatingAdminId === u.id}
+                              style={{ padding: "0.25rem 0.6rem", background: "rgba(16, 185, 129, 0.15)", border: "1px solid #10b981", borderRadius: "4px", color: "#34d399", fontSize: "0.75rem", cursor: "pointer" }}
+                            >
+                              {isUpdatingAdminId === u.id ? "Procesando..." : "Reactivar"}
+                            </button>
+                          ) : (
+                            <span style={{ fontSize: "0.75rem", color: "#fbbf24" }}>Pendiente Activación</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB: AUDITORÍA (Visible ONLY to OWNER) ─────────────────────── */}
+        {activeTab === "audit" && adminUser?.role === "owner" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+              <div>
+                <h2 style={{ fontSize: "1.2rem", margin: 0, fontWeight: "700", color: "#f8fafc", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <FileText className="text-cyan-400" size={20} /> Registro de Auditoría de Administradores
+                </h2>
+                <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "#94a3b8" }}>
+                  Historial inmutable de acciones administrativas: quién realizó cada operación y sobre qué miembro/recurso.
+                </p>
+              </div>
+
+              <button
+                onClick={loadData}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", fontSize: "0.8rem", cursor: "pointer" }}
+              >
+                <RefreshCw size={14} /> Actualizar
+              </button>
+            </div>
+
+            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                <thead>
+                  <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left" }}>
+                    <th style={{ padding: "0.75rem 1rem" }}>Fecha / Hora</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Administrador</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Acción</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Destino</th>
+                    <th style={{ padding: "0.75rem 1rem" }}>Detalles</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={{ padding: "2.5rem", textAlign: "center", color: "#64748b" }}>
+                        No hay registros de auditoría recientes.
+                      </td>
+                    </tr>
+                  ) : (
+                    auditLogs.map((log) => (
+                      <tr key={log.id} style={{ borderTop: "1px solid #1e293b" }}>
+                        <td style={{ padding: "0.75rem 1rem", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                          {new Date(log.created_at).toLocaleString()}
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem", fontWeight: "600", color: "#f8fafc" }}>
+                          <div>{log.admin_email}</div>
+                          <span style={{ fontSize: "0.7rem", color: log.admin_role === "owner" ? "#c084fc" : "#38bdf8", fontWeight: "700" }}>
+                            {log.admin_role.toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem" }}>
+                          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontFamily: "monospace", background: "#1e293b", color: "#38bdf8" }}>
+                            {log.action}
+                          </span>
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem", fontFamily: "monospace", color: "#94a3b8", fontSize: "0.8rem" }}>
+                          {log.target_id ? log.target_id.slice(0, 8) + "..." : "—"}
+                        </td>
+                        <td style={{ padding: "0.75rem 1rem", color: "#cbd5e1", fontSize: "0.8rem" }}>
+                          {log.metadata ? JSON.stringify(log.metadata) : "—"}
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
@@ -1040,6 +1508,375 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         )}
       </div>
 
+      {/* ── MODAL: EMAIL PREVIEW (SECTION 9) ─────────────────────────────────── */}
+      {previewTarget && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", zIndex: 140 }}>
+          <div style={{ width: "100%", maxWidth: "720px", maxHeight: "90vh", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)" }}>
+            {/* Header */}
+            <div style={{ padding: "1.25rem 1.5rem", borderBottom: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <Mail className="text-cyan-400" size={20} />
+                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: "700", color: "#f8fafc" }}>
+                  Vista Previa de Invitación — {previewTarget.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setPreviewTarget(null);
+                  setPreviewData(null);
+                }}
+                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "1.5rem", overflowY: "auto", flex: 1 }}>
+              {loadingPreview ? (
+                <div style={{ padding: "3rem", textAlign: "center", color: "#94a3b8" }}>
+                  <RefreshCw className="animate-spin text-cyan-400" size={28} style={{ margin: "0 auto 0.5rem auto" }} />
+                  <p style={{ margin: 0 }}>Generando plantilla HTML profesional de GhostAI...</p>
+                </div>
+              ) : previewData ? (
+                <>
+                  {/* Meta box */}
+                  <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem 1rem", marginBottom: "1rem", fontSize: "0.85rem" }}>
+                    <div style={{ marginBottom: "0.35rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "#64748b", fontWeight: "700", width: "80px" }}>PARA:</span>
+                      <span style={{ color: "#f8fafc" }}>{previewData.to}</span>
+                    </div>
+                    <div style={{ marginBottom: "0.35rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "#64748b", fontWeight: "700", width: "80px" }}>ASUNTO:</span>
+                      <span style={{ color: "#38bdf8", fontWeight: "600" }}>{previewData.subject}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "#64748b", fontWeight: "700", width: "80px" }}>PREHEADER:</span>
+                      <span style={{ color: "#94a3b8" }}>{previewData.preheader}</span>
+                    </div>
+                  </div>
+
+                  {/* Format Toggle */}
+                  <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+                    <button
+                      onClick={() => setPreviewViewMode("html")}
+                      style={{ padding: "0.35rem 0.75rem", borderRadius: "4px", border: "none", background: previewViewMode === "html" ? "#0284c7" : "#1e293b", color: "#ffffff", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer" }}
+                    >
+                      HTML Render (Cuerpo Real)
+                    </button>
+                    <button
+                      onClick={() => setPreviewViewMode("text")}
+                      style={{ padding: "0.35rem 0.75rem", borderRadius: "4px", border: "none", background: previewViewMode === "text" ? "#0284c7" : "#1e293b", color: "#ffffff", fontSize: "0.75rem", fontWeight: "600", cursor: "pointer" }}
+                    >
+                      Plain Text Fallback
+                    </button>
+                  </div>
+
+                  {/* Render Area */}
+                  {previewViewMode === "html" ? (
+                    <div style={{ border: "1px solid #1e293b", borderRadius: "8px", overflow: "hidden", background: "#050811" }}>
+                      <iframe
+                        title="Email HTML Preview"
+                        srcDoc={previewData.html}
+                        sandbox="allow-same-origin"
+                        style={{ width: "100%", height: "380px", border: "none", display: "block" }}
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ background: "#050811", border: "1px solid #1e293b", borderRadius: "8px", padding: "1rem", maxHeight: "380px", overflowY: "auto" }}>
+                      <pre style={{ margin: 0, color: "#cbd5e1", fontSize: "0.85rem", whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
+                        {previewData.text}
+                      </pre>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "#64748b" }}>
+                    ℹ️ Criptoseguridad: Este email solo incluye el token de activación de un solo uso. La GhostAI Key permanente no viaja en el correo.
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: "1rem 1.5rem", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewTarget(null);
+                  setPreviewData(null);
+                }}
+                style={{ padding: "0.5rem 1rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", fontSize: "0.85rem", cursor: "pointer" }}
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                disabled={isSendingFromPreview || loadingPreview}
+                onClick={handleSendFromPreview}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: isSendingFromPreview ? "not-allowed" : "pointer" }}
+              >
+                {isSendingFromPreview ? <RefreshCw className="animate-spin" size={14} /> : <Send size={14} />}
+                <span>{isSendingFromPreview ? "Enviando..." : "ENVIAR INVITACIÓN"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: BULK SEND CONFIRMATION (SECTION 10 & 15) ──────────────────── */}
+      {showBulkSendConfirm && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 140 }}>
+          <div style={{ width: "100%", maxWidth: "540px", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", padding: "1.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
+              <Send className="text-cyan-400" size={24} />
+              <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: "700", color: "#f8fafc" }}>
+                Confirmar Envío de Invitaciones
+              </h3>
+            </div>
+
+            <p style={{ margin: "0 0 1rem 0", fontSize: "0.9rem", color: "#cbd5e1" }}>
+              Vas a enviar <strong>{selectedMemberIds.size} invitaciones</strong> por correo electrónico profesional de GhostAI.
+            </p>
+
+            {/* List of recipients */}
+            <div style={{ maxHeight: "200px", overflowY: "auto", background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", marginBottom: "1rem" }}>
+              {members
+                .filter((m) => selectedMemberIds.has(m.id))
+                .map((m) => (
+                  <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.35rem 0", borderBottom: "1px solid #1e293b", fontSize: "0.8rem" }}>
+                    <span style={{ color: "#f8fafc", fontWeight: "600" }}>{m.name}</span>
+                    <span style={{ color: "#94a3b8" }}>{m.email}</span>
+                  </div>
+                ))}
+            </div>
+
+            <div style={{ background: "rgba(56, 189, 248, 0.08)", border: "1px solid #0284c7", borderRadius: "6px", padding: "0.75rem", fontSize: "0.8rem", color: "#93c5fd", marginBottom: "1.25rem" }}>
+              ✓ Procesamiento individual por miembro (seguridad batch). Si un correo falla, los demás continúan.<br />
+              ✓ Cuerpo HTML dark premium sin adjuntos .html.<br />
+              ✓ Cero GhostAI Keys permanentes en el email.
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+              <button
+                type="button"
+                disabled={isBulkSending}
+                onClick={() => setShowBulkSendConfirm(false)}
+                style={{ padding: "0.5rem 1rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", fontSize: "0.85rem", cursor: "pointer" }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isBulkSending}
+                onClick={handleConfirmBulkSend}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1.25rem", background: isBulkSending ? "#334155" : "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: isBulkSending ? "not-allowed" : "pointer" }}
+              >
+                {isBulkSending ? <RefreshCw className="animate-spin" size={14} /> : <Send size={14} />}
+                <span>{isBulkSending ? "ENVIANDO..." : "ENVIAR"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: BULK SEND SUMMARY / RESULTS (SECTION 11 & 14) ─────────────── */}
+      {bulkSendSummary && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 140 }}>
+          <div style={{ width: "100%", maxWidth: "560px", maxHeight: "85vh", background: "#0f172a", border: "1px solid #10b981", borderRadius: "12px", padding: "1.75rem", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <CheckCircle2 className="text-emerald-400" size={22} />
+                <h4 style={{ margin: 0, fontSize: "1.2rem", color: "#f8fafc", fontWeight: "bold" }}>
+                  Resultado del Envío
+                </h4>
+              </div>
+              <button
+                onClick={() => setBulkSendSummary(null)}
+                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Counts badges */}
+            <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1.25rem" }}>
+              <div style={{ flex: 1, background: "rgba(16, 185, 129, 0.15)", border: "1px solid #10b981", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
+                <span style={{ display: "block", fontSize: "1.3rem", fontWeight: "bold", color: "#34d399" }}>
+                  {bulkSendSummary.succeededCount}
+                </span>
+                <span style={{ fontSize: "0.75rem", color: "#a7f3d0" }}>ENVIADOS</span>
+              </div>
+              {bulkSendSummary.failedCount > 0 && (
+                <div style={{ flex: 1, background: "rgba(244, 63, 94, 0.15)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "1.3rem", fontWeight: "bold", color: "#fda4af" }}>
+                    {bulkSendSummary.failedCount}
+                  </span>
+                  <span style={{ fontSize: "0.75rem", color: "#fecdd3" }}>FALLARON</span>
+                </div>
+              )}
+            </div>
+
+            {/* Detailed per-recipient list */}
+            <div style={{ maxHeight: "240px", overflowY: "auto", background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", marginBottom: "1.25rem" }}>
+              {bulkSendSummary.succeeded.map((s, idx) => (
+                <div key={`s_${idx}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.4rem 0", borderBottom: "1px solid #1e293b", fontSize: "0.8rem" }}>
+                  <div>
+                    <span style={{ color: "#f8fafc", fontWeight: "600", display: "block" }}>{s.email}</span>
+                    <span style={{ color: "#64748b", fontSize: "0.75rem" }}>ID: {s.memberId.slice(0, 8)}...</span>
+                  </div>
+                  <span style={{ color: "#34d399", fontWeight: "700" }}>✓ ENVIADO</span>
+                </div>
+              ))}
+              {bulkSendSummary.failed.map((f, idx) => (
+                <div key={`f_${idx}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.4rem 0", borderBottom: "1px solid #1e293b", fontSize: "0.8rem" }}>
+                  <div>
+                    <span style={{ color: "#fda4af", fontWeight: "600", display: "block" }}>{f.email || f.memberId}</span>
+                    <span style={{ color: "#64748b", fontSize: "0.75rem" }}>ID: {f.memberId.slice(0, 8)}...</span>
+                  </div>
+                  <span style={{ color: "#fda4af", fontWeight: "700" }} title={f.error}>✗ {f.error}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setBulkSendSummary(null)}
+                style={{ padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
+              >
+                Aceptar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: INVITAR NUEVO ADMINISTRADOR (OWNER ONLY) ─────────────────── */}
+      {showInviteAdminModal && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 130 }}>
+          <div style={{ width: "100%", maxWidth: "480px", background: "#0f172a", border: "1px solid #a855f7", borderRadius: "12px", padding: "1.75rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <Crown className="text-purple-400" size={22} />
+                <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: "700", color: "#f8fafc" }}>
+                  Nuevo Administrador
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowInviteAdminModal(false)}
+                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ margin: "0 0 1rem 0", fontSize: "0.85rem", color: "#94a3b8" }}>
+              Se generará una invitación criptográfica de un solo uso. No se almacena ninguna contraseña fija visible.
+            </p>
+
+            <form onSubmit={handleInviteAdminSubmit}>
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>
+                  Nombre Completo *
+                </label>
+                <input
+                  type="text"
+                  value={newAdminName}
+                  onChange={(e) => setNewAdminName(e.target.value)}
+                  placeholder="Ej: Arturo QA"
+                  required
+                  style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>
+                  Correo Electrónico *
+                </label>
+                <input
+                  type="email"
+                  value={newAdminEmail}
+                  onChange={(e) => setNewAdminEmail(e.target.value)}
+                  placeholder="admin@smartbrain.lat"
+                  required
+                  style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "1.25rem" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>
+                  Rol Asignado
+                </label>
+                <select
+                  value={newAdminRole}
+                  onChange={(e) => setNewAdminRole(e.target.value as any)}
+                  style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
+                >
+                  <option value="admin">ADMIN (Gestión de miembros e invitaciones; sin acceso a secretos ni gestión de Owner)</option>
+                  <option value="owner">OWNER (Control total y gestión de administradores)</option>
+                </select>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowInviteAdminModal(false)}
+                  style={{ padding: "0.5rem 1rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", cursor: "pointer" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isInvitingAdmin}
+                  style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1.25rem", background: "linear-gradient(135deg, #a855f7 0%, #6366f1 100%)", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: isInvitingAdmin ? "not-allowed" : "pointer" }}
+                >
+                  {isInvitingAdmin ? <RefreshCw className="animate-spin" size={14} /> : <Crown size={14} />}
+                  <span>{isInvitingAdmin ? "Generando..." : "Crear Invitación"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: ENLACE DE ACTIVACIÓN DE ADMIN GENERADO ─────────────────────── */}
+      {createdAdminInvite && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 140 }}>
+          <div style={{ width: "100%", maxWidth: "520px", background: "#0f172a", border: "2px solid #a855f7", borderRadius: "12px", padding: "1.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem", color: "#c084fc" }}>
+              <Crown size={24} />
+              <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: "bold" }}>
+                Invitación de Administrador Lista
+              </h3>
+            </div>
+
+            <p style={{ color: "#cbd5e1", fontSize: "0.85rem", lineHeight: "1.4", margin: "0 0 1rem 0" }}>
+              Se ha creado la invitación para <strong>{createdAdminInvite.name}</strong>. Comparte este enlace personal de un solo uso para que establezca su contraseña segura:
+            </p>
+
+            <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", marginBottom: "1.25rem", wordBreak: "break-all", fontFamily: "monospace", fontSize: "0.85rem", color: "#38bdf8" }}>
+              {createdAdminInvite.link}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <button
+                onClick={() => handleCopyText(createdAdminInvite.link, "admin_invite_link")}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.6rem 1.25rem", background: copiedLink === "admin_invite_link" ? "#10b981" : "#a855f7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "600", cursor: "pointer" }}
+              >
+                {copiedLink === "admin_invite_link" ? <Check size={16} /> : <Copy size={16} />}
+                <span>{copiedLink === "admin_invite_link" ? "¡Enlace Copiado!" : "COPIAR ENLACE"}</span>
+              </button>
+
+              <button
+                onClick={() => setCreatedAdminInvite(null)}
+                style={{ padding: "0.6rem 1.25rem", background: "#334155", border: "none", borderRadius: "6px", color: "#f8fafc", fontWeight: "600", cursor: "pointer" }}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── MODAL: BULK MEMBER IMPORTER ───────────────────────────────────────── */}
       {showBulkModal && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", zIndex: 120 }}>
@@ -1102,7 +1939,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                         <Upload size={14} /> Seleccionar Archivo
                         <input
                           type="file"
-                          accept=".xlsx,.csv"
+                          accept=".xlsx,.csv,.txt"
                           style={{ display: "none" }}
                           onChange={(e) => {
                             if (e.target.files && e.target.files[0]) {
@@ -1123,101 +1960,88 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                           background: "#1e293b",
                           border: "1px solid #334155",
                           borderRadius: "6px",
-                          color: "#38bdf8",
+                          color: "#cbd5e1",
                           fontSize: "0.85rem",
                           fontWeight: "600",
                           cursor: "pointer",
                         }}
                       >
-                        <Sparkles size={14} /> Cargar Lista Vigente (12 Miembros)
+                        <Sparkles size={14} className="text-cyan-400" /> Cargar 12 Miembros Vigentes (Demostración)
                       </button>
                     </div>
 
                     {bulkFile && (
-                      <div style={{ marginTop: "0.85rem", fontSize: "0.8rem", color: "#38bdf8" }}>
-                        Archivo seleccionado: <strong>{bulkFile.name}</strong> ({(bulkFile.size / 1024).toFixed(1)} KB)
+                      <div style={{ marginTop: "0.75rem", fontSize: "0.8rem", color: "#38bdf8" }}>
+                        Archivo seleccionado: <strong>{bulkFile.name}</strong>
+                      </div>
+                    )}
+
+                    {bulkParsing && (
+                      <div style={{ marginTop: "1rem", color: "#38bdf8", fontSize: "0.85rem" }}>
+                        <RefreshCw className="animate-spin" size={16} style={{ display: "inline", marginRight: "0.4rem" }} />
+                        Validando estructura y duplicados...
                       </div>
                     )}
                   </div>
 
-                  {bulkParsing && (
-                    <div style={{ padding: "1.5rem", textAlign: "center", color: "#38bdf8" }}>
-                      <RefreshCw className="animate-spin" size={24} style={{ margin: "0 auto 0.5rem auto" }} />
-                      <span>Analizando y validando archivo...</span>
-                    </div>
-                  )}
-
                   {bulkParseError && (
-                    <div style={{ background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", color: "#fda4af", fontSize: "0.85rem", marginBottom: "1rem" }}>
+                    <div style={{ background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", color: "#fda4af", marginBottom: "1.25rem", fontSize: "0.85rem" }}>
                       {bulkParseError}
                     </div>
                   )}
 
-                  {/* Validation Summary & Preview Table */}
+                  {/* Validation Summary */}
                   {bulkValidation && (
                     <div>
-                      {/* Summary Badges */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap", padding: "0.75rem 1rem", background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", marginBottom: "1rem" }}>
-                        <div style={{ fontSize: "0.9rem", fontWeight: "700", color: "#f8fafc" }}>
-                          {bulkValidation.total} miembros encontrados:
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.75rem", marginBottom: "1rem" }}>
+                        <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
+                          <span style={{ fontSize: "1.25rem", fontWeight: "bold", color: "#f8fafc" }}>{bulkValidation.total}</span>
+                          <span style={{ display: "block", fontSize: "0.75rem", color: "#94a3b8" }}>Total Filas</span>
                         </div>
-                        <div style={{ fontSize: "0.85rem", color: "#38bdf8" }}>
-                          <strong>{bulkValidation.monthlyCount}</strong> Mensual
+                        <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid #10b981", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
+                          <span style={{ fontSize: "1.25rem", fontWeight: "bold", color: "#34d399" }}>{bulkValidation.validCount}</span>
+                          <span style={{ display: "block", fontSize: "0.75rem", color: "#a7f3d0" }}>Válidas para Importar</span>
                         </div>
-                        <div style={{ fontSize: "0.85rem", color: "#c084fc" }}>
-                          <strong>{bulkValidation.annualCount}</strong> Anual
+                        <div style={{ background: "rgba(245, 158, 11, 0.1)", border: "1px solid #f59e0b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
+                          <span style={{ fontSize: "1.25rem", fontWeight: "bold", color: "#fbbf24" }}>{bulkValidation.existingCount}</span>
+                          <span style={{ display: "block", fontSize: "0.75rem", color: "#fde68a" }}>Duplicados</span>
                         </div>
-                        <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
-                          <span style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem", borderRadius: "4px", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", fontWeight: "bold" }}>
-                            {bulkValidation.validCount} Válidos
-                          </span>
-                          {bulkValidation.existingCount > 0 && (
-                            <span style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem", borderRadius: "4px", background: "rgba(245, 158, 11, 0.15)", color: "#fbbf24", fontWeight: "bold" }}>
-                              {bulkValidation.existingCount} Ya Existen
-                            </span>
-                          )}
-                          {bulkValidation.errorCount > 0 && (
-                            <span style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem", borderRadius: "4px", background: "rgba(244, 63, 94, 0.15)", color: "#fda4af", fontWeight: "bold" }}>
-                              {bulkValidation.errorCount} Errores
-                            </span>
-                          )}
+                        <div style={{ background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
+                          <span style={{ fontSize: "1.25rem", fontWeight: "bold", color: "#fda4af" }}>{bulkValidation.errorCount}</span>
+                          <span style={{ display: "block", fontSize: "0.75rem", color: "#fecdd3" }}>Errores</span>
                         </div>
                       </div>
 
-                      {/* Preview Table */}
-                      <div style={{ maxHeight: "280px", overflowY: "auto", border: "1px solid #1e293b", borderRadius: "8px" }}>
+                      {/* Preview Rows Table */}
+                      <div style={{ border: "1px solid #1e293b", borderRadius: "8px", overflow: "hidden", maxHeight: "240px", overflowY: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
                           <thead>
-                            <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left", position: "sticky", top: 0 }}>
-                              <th style={{ padding: "0.6rem 0.75rem" }}>#</th>
-                              <th style={{ padding: "0.6rem 0.75rem" }}>NOMBRE</th>
-                              <th style={{ padding: "0.6rem 0.75rem" }}>CORREO</th>
-                              <th style={{ padding: "0.6rem 0.75rem" }}>ACCESO</th>
-                              <th style={{ padding: "0.6rem 0.75rem" }}>VALIDACIÓN</th>
+                            <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left" }}>
+                              <th style={{ padding: "0.5rem 0.75rem" }}>Nombre</th>
+                              <th style={{ padding: "0.5rem 0.75rem" }}>Correo</th>
+                              <th style={{ padding: "0.5rem 0.75rem" }}>Plan</th>
+                              <th style={{ padding: "0.5rem 0.75rem" }}>Estado Validación</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {bulkValidation.rows.map((r) => {
-                              const badgeStyle = r.isValid
-                                ? { bg: "rgba(16, 185, 129, 0.15)", text: "#34d399" }
-                                : r.isExisting
-                                ? { bg: "rgba(245, 158, 11, 0.15)", text: "#fbbf24" }
-                                : { bg: "rgba(244, 63, 94, 0.15)", text: "#fda4af" };
-
-                              return (
-                                <tr key={r.rowNumber} style={{ borderTop: "1px solid #1e293b", background: r.isValid ? "transparent" : "rgba(15, 23, 42, 0.5)" }}>
-                                  <td style={{ padding: "0.6rem 0.75rem", color: "#64748b" }}>{r.rowNumber}</td>
-                                  <td style={{ padding: "0.6rem 0.75rem", fontWeight: "600", color: "#f8fafc" }}>{r.name || "—"}</td>
-                                  <td style={{ padding: "0.6rem 0.75rem", color: "#cbd5e1" }}>{r.email || "—"}</td>
-                                  <td style={{ padding: "0.6rem 0.75rem", color: "#94a3b8" }}>{r.planLabel}</td>
-                                  <td style={{ padding: "0.6rem 0.75rem" }}>
-                                    <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "bold", background: badgeStyle.bg, color: badgeStyle.text }}>
-                                      {r.validationStatus}
-                                    </span>
-                                  </td>
-                                </tr>
-                              );
-                            })}
+                            {bulkValidation.rows.map((r, idx) => (
+                              <tr key={idx} style={{ borderTop: "1px solid #1e293b", background: r.isValid ? undefined : "rgba(244, 63, 94, 0.05)" }}>
+                                <td style={{ padding: "0.5rem 0.75rem", fontWeight: "600", color: "#f8fafc" }}>{r.name || "—"}</td>
+                                <td style={{ padding: "0.5rem 0.75rem", color: "#94a3b8" }}>{r.email || "—"}</td>
+                                <td style={{ padding: "0.5rem 0.75rem" }}>
+                                  <span style={{ padding: "0.15rem 0.4rem", borderRadius: "4px", fontSize: "0.7rem", fontWeight: "bold", background: r.accessPlan === "annual" ? "rgba(168, 85, 247, 0.15)" : "rgba(56, 189, 248, 0.15)", color: r.accessPlan === "annual" ? "#c084fc" : "#38bdf8" }}>
+                                    {r.accessPlan === "annual" ? "Anual" : "Mensual"}
+                                  </span>
+                                </td>
+                                <td style={{ padding: "0.5rem 0.75rem" }}>
+                                  {r.isValid ? (
+                                    <span style={{ color: "#34d399", fontWeight: "600" }}>✓ Listo</span>
+                                  ) : (
+                                    <span style={{ color: "#fda4af" }}>{r.errorMessage || r.validationStatus}</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>
@@ -1225,111 +2049,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   )}
                 </>
               ) : (
-                /* Import Result Summary (Section 20) */
+                /* Import Success Result */
                 <div>
-                  <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
-                    <div style={{ display: "inline-flex", padding: "0.75rem", borderRadius: "50%", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", marginBottom: "0.75rem" }}>
-                      <CheckCircle2 size={36} />
+                  <div style={{ textAlign: "center", padding: "1.5rem 0" }}>
+                    <div style={{ display: "inline-flex", padding: "0.75rem", borderRadius: "50%", background: "rgba(16, 185, 129, 0.1)", color: "#10b981", marginBottom: "0.75rem" }}>
+                      <CheckCircle2 size={40} />
                     </div>
-                    <h4 style={{ margin: "0 0 0.25rem 0", fontSize: "1.25rem", color: "#f8fafc", fontWeight: "800" }}>
-                      IMPORTACIÓN COMPLETADA
+                    <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "1.25rem", color: "#f8fafc" }}>
+                      ¡Importación en Lote Completada!
                     </h4>
                     <p style={{ margin: 0, fontSize: "0.85rem", color: "#94a3b8" }}>
-                      Se han generado claves individuales y tokens de activación únicos para los nuevos miembros.
+                      Se crearon {bulkImportResult.summary.newCount} miembros nuevos y se generaron sus credenciales correspondientes.
                     </p>
-                  </div>
-
-                  {/* Summary Grid */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "0.75rem", marginBottom: "1.5rem" }}>
-                    <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase" }}>Procesadas</div>
-                      <div style={{ fontSize: "1.35rem", fontWeight: "bold", color: "#f8fafc" }}>{bulkImportResult.summary.processed}</div>
-                    </div>
-                    <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#10b981", textTransform: "uppercase" }}>Nuevos</div>
-                      <div style={{ fontSize: "1.35rem", fontWeight: "bold", color: "#34d399" }}>{bulkImportResult.summary.newCount}</div>
-                    </div>
-                    <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#f59e0b", textTransform: "uppercase" }}>Ya Existían</div>
-                      <div style={{ fontSize: "1.35rem", fontWeight: "bold", color: "#fbbf24" }}>{bulkImportResult.summary.existingCount}</div>
-                    </div>
-                    <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#38bdf8", textTransform: "uppercase" }}>Mensuales</div>
-                      <div style={{ fontSize: "1.35rem", fontWeight: "bold", color: "#38bdf8" }}>{bulkImportResult.summary.monthlyCount}</div>
-                    </div>
-                    <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", textAlign: "center" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#c084fc", textTransform: "uppercase" }}>Anuales</div>
-                      <div style={{ fontSize: "1.35rem", fontWeight: "bold", color: "#c084fc" }}>{bulkImportResult.summary.annualCount}</div>
-                    </div>
-                  </div>
-
-                  {/* Results list with copy actions */}
-                  <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #1e293b", borderRadius: "8px" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
-                      <thead>
-                        <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left", position: "sticky", top: 0 }}>
-                          <th style={{ padding: "0.6rem 0.75rem" }}>Nombre</th>
-                          <th style={{ padding: "0.6rem 0.75rem" }}>Correo</th>
-                          <th style={{ padding: "0.6rem 0.75rem" }}>Plan</th>
-                          <th style={{ padding: "0.6rem 0.75rem" }}>Estado</th>
-                          <th style={{ padding: "0.6rem 0.75rem", textAlign: "right" }}>Enlace de Activación</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {bulkImportResult.results.map((r, idx) => (
-                          <tr key={idx} style={{ borderTop: "1px solid #1e293b" }}>
-                            <td style={{ padding: "0.6rem 0.75rem", fontWeight: "600", color: "#f8fafc" }}>{r.name}</td>
-                            <td style={{ padding: "0.6rem 0.75rem", color: "#cbd5e1" }}>{r.email}</td>
-                            <td style={{ padding: "0.6rem 0.75rem", color: "#94a3b8" }}>{r.plan || "—"}</td>
-                            <td style={{ padding: "0.6rem 0.75rem" }}>
-                              <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", fontWeight: "bold", background: r.status === "CREATED" ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)", color: r.status === "CREATED" ? "#34d399" : "#fbbf24" }}>
-                                {r.status}
-                              </span>
-                            </td>
-                            <td style={{ padding: "0.6rem 0.75rem", textAlign: "right" }}>
-                              {r.activationLink ? (
-                                <button
-                                  onClick={() => handleCopyText(r.activationLink!, `bulk_${idx}`)}
-                                  style={{ padding: "0.25rem 0.5rem", background: copiedLink === `bulk_${idx}` ? "#10b981" : "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#f8fafc", fontSize: "0.75rem", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
-                                >
-                                  {copiedLink === `bulk_${idx}` ? <Check size={12} /> : <Copy size={12} />}
-                                  <span>{copiedLink === `bulk_${idx}` ? "Copiado" : "Copiar Enlace"}</span>
-                                </button>
-                              ) : (
-                                <span style={{ color: "#64748b" }}>—</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Footer Buttons */}
+            {/* Footer */}
             <div style={{ padding: "1rem 1.5rem", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
               {!bulkImportResult ? (
                 <>
                   <button
                     type="button"
                     onClick={() => setShowBulkModal(false)}
-                    style={{ padding: "0.5rem 1rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", cursor: "pointer" }}
+                    style={{ padding: "0.5rem 1rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", fontSize: "0.85rem", cursor: "pointer" }}
                   >
                     Cancelar
                   </button>
-
-                  {bulkValidation && bulkValidation.validCount > 0 && (
-                    <button
-                      type="button"
-                      disabled={bulkImporting}
-                      onClick={() => setBulkConfirming(true)}
-                      style={{ padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
-                    >
-                      CREAR {bulkValidation.validCount} ACCESOS
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    disabled={!bulkValidation || bulkValidation.validCount === 0 || bulkImporting}
+                    onClick={handleConfirmBulkImport}
+                    style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: bulkImporting ? "not-allowed" : "pointer" }}
+                  >
+                    {bulkImporting ? <RefreshCw className="animate-spin" size={14} /> : <Check size={14} />}
+                    <span>{bulkImporting ? "Importando..." : `Confirmar e Importar (${bulkValidation?.validCount ?? 0})`}</span>
+                  </button>
                 </>
               ) : (
                 <button
@@ -1337,7 +2093,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   onClick={() => setShowBulkModal(false)}
                   style={{ padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
                 >
-                  Finalizar
+                  Cerrar
                 </button>
               )}
             </div>
@@ -1345,46 +2101,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         </div>
       )}
 
-      {/* ── MODAL: CONFIRMAR CREACIÓN EN LOTE ─────────────────────────────────── */}
-      {bulkConfirming && bulkValidation && (
-        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 130 }}>
-          <div style={{ width: "100%", maxWidth: "440px", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", padding: "1.75rem", boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.75)" }}>
-            <h4 style={{ margin: "0 0 0.75rem 0", fontSize: "1.15rem", color: "#f8fafc", fontWeight: "bold" }}>
-              ¿Confirmar Creación de {bulkValidation.validCount} Accesos?
-            </h4>
-            <p style={{ margin: "0 0 1.25rem 0", fontSize: "0.85rem", color: "#cbd5e1", lineHeight: "1.5" }}>
-              Se generarán claves GhostAI únicas y tokens de activación para <strong>{bulkValidation.validCount} nuevos miembros</strong> ({bulkValidation.monthlyCount} Mensual, {bulkValidation.annualCount} Anual).
-              {bulkValidation.existingCount > 0 && (
-                <span> Los {bulkValidation.existingCount} miembros existentes no serán duplicados.</span>
-              )}
-            </p>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
-              <button
-                type="button"
-                onClick={() => setBulkConfirming(false)}
-                style={{ padding: "0.5rem 1rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", cursor: "pointer" }}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={bulkImporting}
-                onClick={handleConfirmBulkImport}
-                style={{ padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
-              >
-                {bulkImporting ? "Creando..." : "Sí, Crear Accesos"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── MODAL: NUEVO MIEMBRO INDIVIDUAL ───────────────────────────────────── */}
       {showMemberModal && (
-        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 120 }}>
-          <div style={{ width: "100%", maxWidth: "420px", background: "#0f172a", border: "1px solid #1e293b", borderRadius: "10px", padding: "1.5rem" }}>
-            <h3 style={{ margin: "0 0 1.25rem 0", fontSize: "1.15rem", color: "#f8fafc" }}>Crear Nuevo Miembro</h3>
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 120 }}>
+          <div style={{ width: "100%", maxWidth: "440px", background: "#0f172a", border: "1px solid #1e293b", borderRadius: "10px", padding: "1.5rem" }}>
+            <h3 style={{ margin: "0 0 1rem 0", fontSize: "1.1rem", color: "#f8fafc", fontWeight: "bold" }}>
+              Registrar Nuevo Miembro
+            </h3>
             <form onSubmit={handleCreateSingleMember}>
               <div style={{ marginBottom: "1rem" }}>
                 <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>Nombre Completo *</label>
@@ -1392,36 +2115,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   type="text"
                   value={newMemberName}
                   onChange={(e) => setNewMemberName(e.target.value)}
-                  placeholder="Ej: Jose Varela"
+                  placeholder="Ej: Laura Martínez"
                   required
                   style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
                 />
               </div>
-
               <div style={{ marginBottom: "1rem" }}>
                 <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>Correo Electrónico *</label>
                 <input
                   type="email"
                   value={newMemberEmail}
                   onChange={(e) => setNewMemberEmail(e.target.value)}
-                  placeholder="usuario@ejemplo.com"
+                  placeholder="laura@empresa.com"
                   required
                   style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
                 />
               </div>
-
-              <div style={{ marginBottom: "1.5rem" }}>
-                <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>Tipo de Acceso *</label>
+              <div style={{ marginBottom: "1.25rem" }}>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>Tipo de Plan *</label>
                 <select
                   value={newMemberPlan}
                   onChange={(e) => setNewMemberPlan(e.target.value as any)}
                   style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
                 >
-                  <option value="monthly">Mensual (30 días tras activar)</option>
-                  <option value="annual">Anual (365 días tras activar)</option>
+                  <option value="monthly">Mensual (30 días)</option>
+                  <option value="annual">Anual (365 días)</option>
                 </select>
               </div>
-
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
                 <button
                   type="button"
@@ -1433,9 +2153,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 <button
                   type="submit"
                   disabled={creatingMember}
-                  style={{ padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
+                  style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "600", cursor: creatingMember ? "not-allowed" : "pointer" }}
                 >
-                  {creatingMember ? "Creando..." : "Crear Miembro"}
+                  {creatingMember ? <RefreshCw className="animate-spin" size={14} /> : <Plus size={14} />}
+                  <span>{creatingMember ? "Creando..." : "Crear Miembro"}</span>
                 </button>
               </div>
             </form>
@@ -1443,59 +2164,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         </div>
       )}
 
-      {/* ── MODAL: RENOVAR MIEMBRO ────────────────────────────────────────────── */}
+      {/* ── MODAL: RENOVAR ACCESO ──────────────────────────────────────────────── */}
       {renewTarget && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 120 }}>
-          <div style={{ width: "100%", maxWidth: "420px", background: "#0f172a", border: "1px solid #1e293b", borderRadius: "10px", padding: "1.5rem" }}>
-            <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.15rem", color: "#f8fafc" }}>Renovar Acceso</h3>
-            <p style={{ margin: "0 0 1.25rem 0", fontSize: "0.85rem", color: "#94a3b8" }}>
-              Miembro: <strong style={{ color: "#f8fafc" }}>{renewTarget.name}</strong> ({renewTarget.email})
+          <div style={{ width: "100%", maxWidth: "420px", background: "#0f172a", border: "1px solid #10b981", borderRadius: "10px", padding: "1.5rem" }}>
+            <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.1rem", color: "#f8fafc" }}>Renovar Suscripción de Miembro</h3>
+            <p style={{ margin: "0 0 1rem 0", fontSize: "0.85rem", color: "#94a3b8" }}>
+              Renovar el acceso para <strong>{renewTarget.name}</strong> ({renewTarget.email}).
             </p>
-
             <div style={{ marginBottom: "1.25rem" }}>
-              <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.5rem" }}>
-                Extensión a aplicar:
-              </label>
-              <div style={{ display: "flex", gap: "0.75rem" }}>
-                <button
-                  type="button"
-                  onClick={() => setRenewPlan("monthly")}
-                  style={{
-                    flex: 1,
-                    padding: "0.6rem",
-                    borderRadius: "6px",
-                    border: renewPlan === "monthly" ? "2px solid #38bdf8" : "1px solid #334155",
-                    background: renewPlan === "monthly" ? "rgba(56, 189, 248, 0.15)" : "#080c14",
-                    color: renewPlan === "monthly" ? "#38bdf8" : "#cbd5e1",
-                    fontWeight: "600",
-                    cursor: "pointer",
-                  }}
-                >
-                  + 1 Mes (30 días)
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setRenewPlan("annual")}
-                  style={{
-                    flex: 1,
-                    padding: "0.6rem",
-                    borderRadius: "6px",
-                    border: renewPlan === "annual" ? "2px solid #c084fc" : "1px solid #334155",
-                    background: renewPlan === "annual" ? "rgba(168, 85, 247, 0.15)" : "#080c14",
-                    color: renewPlan === "annual" ? "#c084fc" : "#cbd5e1",
-                    fontWeight: "600",
-                    cursor: "pointer",
-                  }}
-                >
-                  + 1 Año (365 días)
-                </button>
-              </div>
-              <p style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "0.5rem" }}>
-                Si el usuario sigue activo, se sumará desde su fecha de vencimiento actual. Si está expirado, se sumará desde hoy.
-              </p>
+              <label style={{ display: "block", fontSize: "0.8rem", color: "#cbd5e1", marginBottom: "0.4rem" }}>Periodo de Renovación</label>
+              <select
+                value={renewPlan}
+                onChange={(e) => setRenewPlan(e.target.value as any)}
+                style={{ width: "100%", padding: "0.6rem", background: "#080c14", border: "1px solid #334155", borderRadius: "6px", color: "#f8fafc", boxSizing: "border-box" }}
+              >
+                <option value="monthly">Extender +1 Mes (30 días)</option>
+                <option value="annual">Extender +1 Año (365 días)</option>
+              </select>
             </div>
-
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
               <button
                 type="button"
@@ -1508,31 +2195,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 type="button"
                 disabled={isRenewing}
                 onClick={handleConfirmRenew}
-                style={{ padding: "0.5rem 1.25rem", background: "#10b981", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "#10b981", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "600", cursor: isRenewing ? "not-allowed" : "pointer" }}
               >
-                {isRenewing ? "Renovando..." : "Confirmar Renovación"}
+                {isRenewing ? <RefreshCw className="animate-spin" size={14} /> : <Check size={14} />}
+                <span>{isRenewing ? "Renovando..." : "Confirmar Renovación"}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── MODAL: REVOCAR MIEMBRO ────────────────────────────────────────────── */}
+      {/* ── MODAL: REVOCAR ACCESO ──────────────────────────────────────────────── */}
       {revokeTarget && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 120 }}>
-          <div style={{ width: "100%", maxWidth: "440px", background: "#0f172a", border: "1px solid #f43f5e", borderRadius: "10px", padding: "1.75rem" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#fda4af", marginBottom: "0.75rem" }}>
-              <AlertTriangle size={22} />
-              <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: "bold" }}>¿Revocar Acceso de Miembro?</h3>
+          <div style={{ width: "100%", maxWidth: "440px", background: "#0f172a", border: "1px solid #f43f5e", borderRadius: "10px", padding: "1.5rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#f43f5e", marginBottom: "0.75rem" }}>
+              <AlertTriangle size={24} />
+              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: "bold" }}>Revocar Acceso Inmediato</h3>
             </div>
-
-            <p style={{ margin: "0 0 1.25rem 0", fontSize: "0.85rem", color: "#e2e8f0", lineHeight: "1.5" }}>
-              Se invalidará inmediatamente el acceso de <strong>{revokeTarget.name}</strong> ({revokeTarget.email}). Su GhostAI Key y tokens de invitación quedarán revocados en el servidor.
+            <p style={{ margin: "0 0 1rem 0", fontSize: "0.85rem", color: "#e2e8f0", lineHeight: "1.4" }}>
+              ¿Estás seguro de que deseas revocar el acceso a <strong>{revokeTarget.name}</strong> ({revokeTarget.email})?
+              La GhostAI Key asociada será invalidada de inmediato y no podrá realizar peticiones TTS.
             </p>
-            <p style={{ margin: "0 0 1.5rem 0", fontSize: "0.8rem", color: "#94a3b8" }}>
-              Otros usuarios y miembros no serán afectados por esta revocación.
-            </p>
-
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
               <button
                 type="button"
@@ -1545,7 +2229,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 type="button"
                 disabled={isRevoking}
                 onClick={handleConfirmRevoke}
-                style={{ padding: "0.5rem 1.25rem", background: "#f43f5e", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
+                style={{ padding: "0.5rem 1rem", background: "#e11d48", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "600", cursor: isRevoking ? "not-allowed" : "pointer" }}
               >
                 {isRevoking ? "Revocando..." : "Sí, Revocar Acceso"}
               </button>
@@ -1554,7 +2238,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         </div>
       )}
 
-      {/* ── MODAL: FICHA DETALLADA DEL MIEMBRO (Section 21) ───────────────────── */}
+      {/* ── MODAL: FICHA DETALLADA DEL MIEMBRO ─────────────────────────────────── */}
       {detailTarget && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 120 }}>
           <div style={{ width: "100%", maxWidth: "600px", maxHeight: "90vh", background: "#0f172a", border: "1px solid #1e293b", borderRadius: "12px", overflowY: "auto", padding: "1.75rem", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.7)" }}>
@@ -1630,26 +2314,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   </span>
                 </div>
               </div>
-
-              {detailTarget.revoked_at && (
-                <div style={{ gridColumn: "span 2", background: "rgba(244,63,94,0.1)", border: "1px solid #f43f5e", borderRadius: "6px", padding: "0.6rem 0.85rem", color: "#fda4af" }}>
-                  <span style={{ display: "block", fontSize: "0.7rem", textTransform: "uppercase" }}>Fecha de Revocación</span>
-                  <span style={{ fontSize: "0.85rem" }}>{new Date(detailTarget.revoked_at).toLocaleString()}</span>
-                </div>
-              )}
             </div>
 
-            {/* Administrative Actions */}
+            {/* Actions */}
             <div style={{ borderTop: "1px solid #1e293b", paddingTop: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button
                   onClick={() => {
-                    handleResendInvite(detailTarget);
+                    handleOpenEmailPreview(detailTarget);
                     setDetailTarget(null);
                   }}
                   style={{ padding: "0.4rem 0.75rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontSize: "0.8rem", fontWeight: "600", cursor: "pointer" }}
                 >
-                  Reenviar Invitación
+                  Ver Email
                 </button>
 
                 <button
@@ -1660,7 +2337,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   }}
                   style={{ padding: "0.4rem 0.75rem", background: "#10b981", border: "none", borderRadius: "6px", color: "#ffffff", fontSize: "0.8rem", fontWeight: "600", cursor: "pointer" }}
                 >
-                  Renovar Acceso
+                  Renovar
                 </button>
 
                 <button
@@ -1690,7 +2367,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         </div>
       )}
 
-      {/* ── MODAL: INVITACIÓN GENERADA / PLANTILLA DE CORREO (Section 18) ──────── */}
+      {/* ── MODAL: INVITACIÓN GENERADA / PLANTILLA DE CORREO (LEGACY) ──────────── */}
       {generatedInvite && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 130 }}>
           <div style={{ width: "100%", maxWidth: "520px", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", padding: "1.75rem" }}>
@@ -1730,7 +2407,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: copiedLink === "invite_body" ? "#10b981" : "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "600", fontSize: "0.85rem", cursor: "pointer" }}
               >
                 {copiedLink === "invite_body" ? <Check size={14} /> : <Copy size={14} />}
-                <span>{copiedLink === "invite_body" ? "¡Copiada!" : "Copiar Plantilla Completa"}</span>
+                <span>{copiedLink === "invite_body" ? "¡Copiada!" : "Copiar Plantilla"}</span>
               </button>
 
               <button
@@ -1739,59 +2416,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               >
                 {copiedLink === "invite_link_only" ? <Check size={14} /> : <Copy size={14} />}
                 <span>{copiedLink === "invite_link_only" ? "¡Copiado!" : "Copiar Solo Enlace"}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── MODAL: INVITACIONES EN LOTE PREPARADAS (Section 19) ───────────────── */}
-      {batchInvitesResult && (
-        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 130 }}>
-          <div style={{ width: "100%", maxWidth: "600px", maxHeight: "85vh", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", padding: "1.75rem", overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <Send className="text-cyan-400" size={20} />
-                <h4 style={{ margin: 0, fontSize: "1.2rem", color: "#f8fafc", fontWeight: "bold" }}>
-                  {batchInvitesResult.sentCount} Invitaciones Preparadas
-                </h4>
-              </div>
-              <button
-                onClick={() => setBatchInvitesResult(null)}
-                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <p style={{ margin: "0 0 1rem 0", fontSize: "0.85rem", color: "#94a3b8" }}>
-              Se generaron tokens de activación de un solo uso para cada miembro. Zero correos reales enviados.
-            </p>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1.25rem" }}>
-              {batchInvitesResult.invitations.map((inv, idx) => (
-                <div key={idx} style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "8px", padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <strong style={{ color: "#f8fafc", fontSize: "0.85rem", display: "block" }}>{inv.emailPayload.name}</strong>
-                    <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>{inv.emailPayload.email} • Plan {inv.emailPayload.plan}</span>
-                  </div>
-                  <button
-                    onClick={() => handleCopyText(inv.emailPayload.body, `batch_${idx}`)}
-                    style={{ padding: "0.35rem 0.75rem", background: copiedLink === `batch_${idx}` ? "#10b981" : "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#38bdf8", fontSize: "0.75rem", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
-                  >
-                    {copiedLink === `batch_${idx}` ? <Check size={12} /> : <Copy size={12} />}
-                    <span>{copiedLink === `batch_${idx}` ? "Copiada" : "Copiar Plantilla"}</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                onClick={() => setBatchInvitesResult(null)}
-                style={{ padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", cursor: "pointer" }}
-              >
-                Cerrar
               </button>
             </div>
           </div>

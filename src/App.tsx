@@ -42,6 +42,7 @@ import { saveActiveSession,
   savePackageBlob, loadActiveSession, clearActiveSession } from "./services/projectStorage";
 import { DownloadReceiver } from "./components/DownloadReceiver";
 import { AdminDashboard } from "./components/Admin/AdminDashboard";
+import { AdminActivationScreen } from "./components/Admin/AdminActivationScreen";
 import { ActivationScreen } from "./components/ActivationScreen";
 import { RecoveryVaultSection } from "./components/RecoveryVaultSection";
 import { ZipVerificationCard } from "./components/ZipVerificationCard";
@@ -65,6 +66,38 @@ export const App: React.FC = () => {
   const isReceiverMode = useMemo(() => isDownloadReceiverMode(), []);
   if (isReceiverMode) {
     return <DownloadReceiver />;
+  }
+
+  const [adminActivationToken, setAdminActivationToken] = useState<string | null>(() => {
+    if (typeof window === "undefined" || !window.location) return null;
+    try {
+      const pathname = window.location.pathname || "";
+      if (pathname.includes("/admin/activate/")) {
+        const parts = pathname.split("/admin/activate/");
+        if (parts[1]) return decodeURIComponent(parts[1].split("/")[0].split("?")[0]);
+      }
+      const params = new URLSearchParams(window.location.search);
+      return params.get("adminActivate") || null;
+    } catch {
+      return null;
+    }
+  });
+
+  if (adminActivationToken) {
+    return (
+      <AdminActivationScreen
+        token={adminActivationToken}
+        onActivationSuccess={() => {
+          setAdminActivationToken(null);
+          setAdminMode(true);
+          try {
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState({}, document.title, "/?mode=admin");
+            }
+          } catch (_) {}
+        }}
+      />
+    );
   }
 
   const [adminMode, setAdminMode] = useState<boolean>(() => isAdminMode());

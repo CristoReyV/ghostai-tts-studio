@@ -49,13 +49,16 @@ export interface AdminTtsSession {
  * Exchanges admin credential for HttpOnly session cookie.
  * Frontend caller must immediately wipe credential input from memory and DOM.
  */
-export async function loginAdmin(adminToken: string): Promise<boolean> {
+export async function loginAdmin(
+  credentials: string | { email: string; password: string }
+): Promise<boolean> {
   const baseUrl = getGatewayBaseUrl();
+  const body = typeof credentials === "string" ? { adminToken: credentials } : credentials;
   const res = await fetch(`${baseUrl}/api/admin/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ adminToken }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -82,6 +85,27 @@ export async function checkAdminStatus(): Promise<boolean> {
     return data.authenticated === true;
   } catch (_) {
     return false;
+  }
+}
+
+/**
+ * Fetches full admin session info including role and identity.
+ */
+export async function fetchAdminSession(): Promise<{ authenticated: boolean; admin?: AdminUserIdentity }> {
+  const baseUrl = getGatewayBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/admin/auth/status`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (!res.ok) return { authenticated: false };
+    const data = await res.json();
+    return {
+      authenticated: data.authenticated === true,
+      admin: data.admin || undefined,
+    };
+  } catch (_) {
+    return { authenticated: false };
   }
 }
 
@@ -265,6 +289,62 @@ export interface AdminMember {
   revoked_at: string | null;
   tokenPublicId?: string | null;
   lastUsedAt?: string | null;
+  last_email_sent_at?: string | null;
+  last_email_status?: "not_sent" | "sent" | "failed" | null;
+  last_email_sent_by?: string | null;
+  last_email_error?: string | null;
+}
+
+export interface AdminUserIdentity {
+  id: string;
+  name: string;
+  email: string;
+  role: "owner" | "admin";
+}
+
+export interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  role: "owner" | "admin";
+  status: "pending" | "active" | "disabled";
+  created_at: string;
+  invited_at: string | null;
+  activated_at: string | null;
+  last_login_at: string | null;
+  invited_by: string | null;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  admin_id: string | null;
+  admin_email: string;
+  admin_role: string;
+  action: string;
+  target_id: string | null;
+  metadata: Record<string, any>;
+  created_at: string;
+}
+
+export interface EmailPreviewData {
+  to: string;
+  name: string;
+  plan: string;
+  subject: string;
+  preheader: string;
+  html: string;
+  text: string;
+  activationLink: string;
+  invitationExpiresAt: string;
+}
+
+export interface SendInvitationResult {
+  ok: boolean;
+  processed: number;
+  succeededCount: number;
+  failedCount: number;
+  succeeded: Array<{ memberId: string; email: string; messageId?: string; simulated?: boolean }>;
+  failed: Array<{ memberId: string; email?: string; error: string }>;
 }
 
 export interface EmailPayload {
@@ -506,6 +586,160 @@ export async function activateMember(token: string): Promise<ActivationResponse>
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error?.message || "No se pudo activar el acceso. El enlace puede haber expirado o ya fue utilizado.");
+  }
+
+  return await res.json();
+}
+
+/**
+ * Lists all administrators. OWNER only.
+ */
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const baseUrl = getGatewayBaseUrl();
+  const res = await fetch(`${baseUrl}/api/admin/users`, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error listando administradores (${res.status})`);
+  }
+
+  const data = await res.json();
+  return data.users || [];
+}
+
+/**
+ * Invites a new administrator. OWNER only.
+ */
+export async function inviteAdminUser(
+  name: string,
+  email: string,
+  role: "owner" | "admin" = "admin"
+): Promise<{ adminUser: AdminUser; activationToken: string; activationLink: string }> {
+  const baseUrl = getGatewayBaseUrl();
+  const res = await fetch(`${baseUrl}/api/admin/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ name, email, role }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error invitando administrador (${res.status})`);
+  }
+
+  return await res.json();
+}
+
+/**
+ * Updates administrator status (active | disabled). OWNER only.
+ */
+export async function updateAdminUserStatus(
+  adminId: string,
+  status: "active" | "disabled"
+): Promise<AdminUser> {
+  const baseUrl = getGatewayBaseUrl();
+  const res = await fetch(`${baseUrl}/api/admin/users/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ adminId, status }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error actualizando administrador (${res.status})`);
+  }
+
+  const data = await res.json();
+  return data.adminUser;
+}
+
+/**
+ * Lists administrative audit logs. OWNER only.
+ */
+export async function fetchAdminAuditLogs(limit: number = 100, offset: number = 0): Promise<AdminAuditLog[]> {
+  const baseUrl = getGatewayBaseUrl();
+  const res = await fetch(`${baseUrl}/api/admin/audit-logs?limit=${limit}&offset=${offset}`, {
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error listando registros de auditoría (${res.status})`);
+  }
+
+  const data = await res.json();
+  return data.logs || [];
+}
+
+/**
+ * Previews personalized invitation email HTML and plain text for a member.
+ */
+export async function previewMemberEmail(memberId: string): Promise<EmailPreviewData> {
+  const baseUrl = getGatewayBaseUrl();
+  const res = await fetch(`${baseUrl}/api/admin/members/email-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ memberId }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error generando vista previa de correo (${res.status})`);
+  }
+
+  const data = await res.json();
+  return data.preview;
+}
+
+/**
+ * Sends invitation email(s) to 1 or more members.
+ */
+export async function sendMemberInvitations(
+  memberIds: string | string[]
+): Promise<SendInvitationResult> {
+  const baseUrl = getGatewayBaseUrl();
+  const payload = Array.isArray(memberIds) ? { memberIds } : { memberId: memberIds };
+
+  const res = await fetch(`${baseUrl}/api/admin/members/send-invitation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error enviando invitaciones (${res.status})`);
+  }
+
+  return await res.json();
+}
+
+/**
+ * Activates an invited administrator account with their password.
+ */
+export async function activateAdminAccount(
+  token: string,
+  password: string
+): Promise<{ ok: boolean; authenticated: boolean; admin: AdminUserIdentity }> {
+  const baseUrl = getGatewayBaseUrl();
+  const res = await fetch(`${baseUrl}/api/admin/auth/activate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ token, password }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || `Error activando cuenta de administrador (${res.status})`);
   }
 
   return await res.json();
