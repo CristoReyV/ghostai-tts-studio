@@ -42,6 +42,7 @@ import { saveActiveSession,
   savePackageBlob, loadActiveSession, clearActiveSession } from "./services/projectStorage";
 import { DownloadReceiver } from "./components/DownloadReceiver";
 import { AdminDashboard } from "./components/Admin/AdminDashboard";
+import { ActivationScreen } from "./components/ActivationScreen";
 import { RecoveryVaultSection } from "./components/RecoveryVaultSection";
 import { ZipVerificationCard } from "./components/ZipVerificationCard";
 import {
@@ -72,6 +73,43 @@ export const App: React.FC = () => {
       <AdminDashboard
         onBackToStudio={() => {
           setAdminMode(false);
+          try {
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }
+          } catch (_) {}
+        }}
+      />
+    );
+  }
+
+  const [activationToken, setActivationToken] = useState<string | null>(() => {
+    if (typeof window === "undefined" || !window.location) return null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("activate") || params.get("token") || null;
+    } catch {
+      return null;
+    }
+  });
+
+  if (activationToken) {
+    return (
+      <ActivationScreen
+        token={activationToken}
+        onActivationSuccess={(name) => {
+          setClientName(name);
+          setIsAuthenticated(true);
+          setIsCheckingAuth(false);
+          setActivationToken(null);
+          try {
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState({}, document.title, window.location.pathname);
+            }
+          } catch (_) {}
+        }}
+        onCancel={() => {
+          setActivationToken(null);
           try {
             if (window.history && window.history.replaceState) {
               window.history.replaceState({}, document.title, window.location.pathname);
