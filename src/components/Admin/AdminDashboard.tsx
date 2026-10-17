@@ -14,7 +14,7 @@
  *      * Single & Bulk sending with duplicate-click protection ("ENVIANDO...").
  *      * Per-member email delivery status (NO ENVIADA, ENVIADA, ACTIVADO, ERROR).
  *      * Individual batch safety with isolated execution.
- *      * Zero permanent GhostAI keys in email bodies.
+ *      * OWNER-authorized key delivery through authenticated email preparation.
  */
 
 import { ManualInvitationActions } from "./ManualInvitationActions";
@@ -675,7 +675,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // Helper for Member Email Status Badge
   const renderEmailStatusBadge = (m: AdminMember) => {
-    if (m.status === "active") {
+    if (m.status === "active" && m.last_email_status !== "not_sent" && m.last_email_status !== "failed") {
       return (
         <div>
           <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", letterSpacing: "0.03em" }}>
