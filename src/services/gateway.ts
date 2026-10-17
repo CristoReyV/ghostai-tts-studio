@@ -43,31 +43,20 @@ export function setOnAuthExpired(cb: (() => void) | null): void {
  * Never reads from localStorage, cookies, URL, or persistent storage.
  */
 export function getGatewayAuthToken(): string | null {
-  if (typeof window !== "undefined" && window.sessionStorage) {
-    try {
-      return window.sessionStorage.getItem(OPERATOR_TOKEN_STORAGE_KEY);
-    } catch {
-      return memorySessionToken;
-    }
-  }
-  return memorySessionToken;
+ try { if (typeof window !== "undefined") return window.sessionStorage?.getItem(OPERATOR_TOKEN_STORAGE_KEY) || memorySessionToken; } catch { /* Storage may be blocked. */ }
+ return memorySessionToken;
 }
 
-/**
- * Stores validated operator auth token into sessionStorage.
- */
-export function setGatewayAuthToken(token: string): void {
-  const clean = token && token.trim() ? token.trim() : null;
-  if (typeof window !== "undefined" && window.sessionStorage) {
-    try {
-      if (clean) {
-        window.sessionStorage.setItem(OPERATOR_TOKEN_STORAGE_KEY, clean);
-      } else {
-        window.sessionStorage.removeItem(OPERATOR_TOKEN_STORAGE_KEY);
-      }
-    } catch {}
-  }
-  memorySessionToken = clean;
+/** Store and verify the existing session credential before activation success. */
+export function setGatewayAuthToken(token: string): boolean {
+ const clean = token?.trim() || null;
+ memorySessionToken = clean;
+ try {
+  if (typeof window === "undefined" || !window.sessionStorage) return false;
+  if (clean) window.sessionStorage.setItem(OPERATOR_TOKEN_STORAGE_KEY, clean);
+  else window.sessionStorage.removeItem(OPERATOR_TOKEN_STORAGE_KEY);
+  return window.sessionStorage.getItem(OPERATOR_TOKEN_STORAGE_KEY) === clean;
+ } catch { return false; }
 }
 
 /**

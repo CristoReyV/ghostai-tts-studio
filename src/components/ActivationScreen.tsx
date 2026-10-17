@@ -7,8 +7,8 @@
 
 import React, { useState, useEffect } from "react";
 import { Layers, CheckCircle2, AlertCircle, Loader2, ArrowRight, Calendar, ShieldCheck, Sparkles } from "lucide-react";
-import { activateMember, type ActivationResponse } from "../services/adminService";
-import { setGatewayAuthToken } from "../services/gateway";
+import { type ActivationResponse } from "../services/adminService";
+import { activateOnce, persistActivationCredential } from "../services/activationRecovery";
 
 interface ActivationScreenProps {
   token: string;
@@ -24,6 +24,8 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ActivationResponse | null>(null);
+  const [persisted, setPersisted] = useState(false);
+  const [consumed, setConsumed] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -32,16 +34,20 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({
       setLoading(true);
       setError(null);
       try {
-        const res = await activateMember(token);
+        const res = await activateOnce(token);
         if (!isMounted) return;
-
-        if (res.ok && res.accessKey) {
-          setGatewayAuthToken(res.accessKey);
+        const saved = persistActivationCredential(res);
+        setPersisted(saved);
+        if (saved) {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("activate"); url.searchParams.delete("token");
+          window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
         }
         setResult(res);
         setLoading(false);
       } catch (err) {
         if (!isMounted) return;
+        setConsumed((err as Error & { code?: string }).code === "TOKEN_ALREADY_USED");
         setError((err as Error).message || "No se pudo validar el enlace de activación.");
         setLoading(false);
       }
@@ -120,10 +126,10 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({
               <AlertCircle size={32} />
             </div>
             <h2 style={{ fontSize: "1.15rem", fontWeight: "700", color: "#fda4af", margin: "0 0 0.5rem 0" }}>
-              Enlace de activación inválido o expirado
+              {consumed ? "Este enlace ya fue utilizado." : "No se pudo activar el acceso"}
             </h2>
             <p style={{ fontSize: "0.85rem", color: "#94a3b8", margin: "0 0 1.5rem 0", lineHeight: "1.5" }}>
-              {error}
+              {consumed ? "Si ya activaste tu acceso, entra usando tu GhostAI Key." : error}
             </p>
             <button
               onClick={onCancel}
@@ -139,13 +145,14 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({
                 cursor: "pointer",
               }}
             >
-              Ir al inicio de sesión
+              ENTRAR CON KEY
             </button>
           </div>
         )}
 
         {result && !loading && !error && (
           <div style={{ padding: "0.5rem 0" }}>
+            {!persisted && <div role="alert" style={{ background: "#312315", border: "1px solid #f59e0b", padding: "1rem", marginBottom: "1rem", overflowWrap: "anywhere" }}><p>Tu acceso fue activado. Guarda esta key para entrar manualmente.</p><code style={{ userSelect: "text" }}>{result.accessKey}</code><p>Tu navegador no pudo guardar la credencial. También puedes recuperarla desde tu correo.</p></div>}
             <div style={{ display: "inline-flex", padding: "0.75rem", borderRadius: "50%", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", marginBottom: "1rem" }}>
               <CheckCircle2 size={36} />
             </div>

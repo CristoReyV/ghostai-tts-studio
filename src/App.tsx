@@ -62,97 +62,7 @@ import { NarrationTable } from "./components/NarrationTable";
 import { AuthGate } from "./components/AuthGate";
 import { AlertCircle, CheckCircle2, Info, Loader2, Layers } from "lucide-react";
 
-export const App: React.FC = () => {
-  const isReceiverMode = useMemo(() => isDownloadReceiverMode(), []);
-  if (isReceiverMode) {
-    return <DownloadReceiver />;
-  }
-
-  const [adminActivationToken, setAdminActivationToken] = useState<string | null>(() => {
-    if (typeof window === "undefined" || !window.location) return null;
-    try {
-      const pathname = window.location.pathname || "";
-      if (pathname.includes("/admin/activate/")) {
-        const parts = pathname.split("/admin/activate/");
-        if (parts[1]) return decodeURIComponent(parts[1].split("/")[0].split("?")[0]);
-      }
-      const params = new URLSearchParams(window.location.search);
-      return params.get("adminActivate") || null;
-    } catch {
-      return null;
-    }
-  });
-
-  if (adminActivationToken) {
-    return (
-      <AdminActivationScreen
-        token={adminActivationToken}
-        onActivationSuccess={() => {
-          setAdminActivationToken(null);
-          setAdminMode(true);
-          try {
-            if (window.history && window.history.replaceState) {
-              window.history.replaceState({}, document.title, "/?mode=admin");
-            }
-          } catch (_) {}
-        }}
-      />
-    );
-  }
-
-  const [adminMode, setAdminMode] = useState<boolean>(() => isAdminMode());
-  if (adminMode) {
-    return (
-      <AdminDashboard
-        onBackToStudio={() => {
-          setAdminMode(false);
-          try {
-            if (window.history && window.history.replaceState) {
-              window.history.replaceState({}, document.title, window.location.pathname);
-            }
-          } catch (_) {}
-        }}
-      />
-    );
-  }
-
-  const [activationToken, setActivationToken] = useState<string | null>(() => {
-    if (typeof window === "undefined" || !window.location) return null;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      return params.get("activate") || params.get("token") || null;
-    } catch {
-      return null;
-    }
-  });
-
-  if (activationToken) {
-    return (
-      <ActivationScreen
-        token={activationToken}
-        onActivationSuccess={(name) => {
-          setClientName(name);
-          setIsAuthenticated(true);
-          setIsCheckingAuth(false);
-          setActivationToken(null);
-          try {
-            if (window.history && window.history.replaceState) {
-              window.history.replaceState({}, document.title, window.location.pathname);
-            }
-          } catch (_) {}
-        }}
-        onCancel={() => {
-          setActivationToken(null);
-          try {
-            if (window.history && window.history.replaceState) {
-              window.history.replaceState({}, document.title, window.location.pathname);
-            }
-          } catch (_) {}
-        }}
-      />
-    );
-  }
-
+const StudioApp: React.FC = () => {
   const isEmbedded = useMemo(() => isEmbeddedFrame(), []);
 
   // Operator authentication state (session-only)
@@ -1442,6 +1352,28 @@ export const App: React.FC = () => {
       </footer>
     </div>
   );
+};
+
+export const App: React.FC = () => {
+ const isReceiverMode = useMemo(() => isDownloadReceiverMode(), []);
+ const [adminMode, setAdminMode] = useState(() => isAdminMode());
+ const [adminActivationToken, setAdminActivationToken] = useState<string | null>(() => {
+  const parts = window.location.pathname.split("/admin/activate/");
+  return parts[1] ? decodeURIComponent(parts[1].split("/")[0]) : new URLSearchParams(window.location.search).get("adminActivate");
+ });
+ const [activationToken, setActivationToken] = useState<string | null>(() => {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("activate") || params.get("token");
+ });
+ const clearActivationUrl = () => {
+  const url = new URL(window.location.href); url.searchParams.delete("activate"); url.searchParams.delete("token");
+  window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+ };
+ if (isReceiverMode) return <DownloadReceiver />;
+ if (adminActivationToken) return <AdminActivationScreen token={adminActivationToken} onActivationSuccess={() => {setAdminActivationToken(null);setAdminMode(true);window.history.replaceState({},document.title,"/?mode=admin");}} />;
+ if (adminMode) return <AdminDashboard onBackToStudio={() => {setAdminMode(false);window.history.replaceState({},document.title,window.location.pathname);}} />;
+ if (activationToken) return <ActivationScreen token={activationToken} onActivationSuccess={() => {clearActivationUrl();setActivationToken(null);}} onCancel={() => {clearGatewayAuthToken();clearActivationUrl();setActivationToken(null);}} />;
+ return <StudioApp />;
 };
 
 export default App;

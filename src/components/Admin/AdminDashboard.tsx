@@ -69,7 +69,6 @@ import {
   inviteAdminUser,
   updateAdminUserStatus,
   fetchAdminAuditLogs,
-  previewMemberEmail,
   sendMemberInvitations,
   type AdminClient,
   type AdminToken,
@@ -104,6 +103,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [activeTab, setActiveTab] = useState<"members" | "admins" | "audit" | "clients" | "tokens" | "operations">("members");
 
   const manualEmail = emailConfig?.deliveryMode === "manual" || !emailConfig?.isLive;
+  const serverEmailReady = emailConfig?.isLive === true;
   const isOwner = adminUser?.role === "owner";
   const isOperator = adminUser?.role === "operator";
   const [operatorKey, setOperatorKey] = useState<string | null>(null);
@@ -511,7 +511,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     setDataError(null);
     try {
       setPreviewData(null);
-      const data = manualEmail ? await prepareManualInvitation(member.id) : await previewMemberEmail(member.id);
+      const data = await prepareManualInvitation(member.id);
       setPreviewData(data);
     } catch (err) {
       setDataError((err as Error).message);
@@ -541,7 +541,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // 3. Single Send directly from Table
   const handleSendSingleDirect = async (member: AdminMember) => {
-    if (manualEmail) { await handleOpenEmailPreview(member); return; }
+    if (!serverEmailReady) { await handleOpenEmailPreview(member); return; }
     setSendingMemberId(member.id);
     setDataError(null);
     try {
@@ -884,7 +884,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               title={
                 emailConfig?.isLive
                   ? `Proveedor activo: ${emailConfig.provider.toUpperCase()} (${emailConfig.sender})`
-                  : "Envío manual: prepara y envía desde tu cuenta de correo."
+                  : "Prepara y copia el correo con la key para enviarlo desde tu cuenta."
               }
               style={{
                 display: "inline-flex",
@@ -901,7 +901,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               }}
             >
               <Mail size={12} />
-              EMAIL: {manualEmail ? "ENVÍO MANUAL" : emailConfig?.isLive ? "LIVE" : "SANDBOX"}
+              EMAIL: {serverEmailReady ? "LIVE" : "ENVÍO MANUAL"}
             </span>
 
             {/* Admin identity display */}
@@ -1025,7 +1025,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                     onClick={async () => { try { await auditBulkPreview(Array.from(selectedMemberIds)); setShowBulkSendConfirm(true); } catch (err) { setDataError((err as Error).message); } }}
                     style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "linear-gradient(135deg, #0284c7 0%, #38bdf8 100%)", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: "pointer" }}
                   >
-                    <Send size={15} /> {manualEmail ? "PREPARAR CORREOS" : "ENVIAR INVITACIONES"} ({selectedMemberIds.size})
+                    <Send size={15} /> {!serverEmailReady ? "PREPARAR CORREOS" : "ENVIAR INVITACIONES"} ({selectedMemberIds.size})
                   </button>
                 )}
 
@@ -1170,16 +1170,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 <span>Ver Email</span>
                               </button>
 
-                              <button onClick={async () => { try { const link = manualEmail ? (await prepareManualInvitation(m.id)).activationLink : await createInvitationLink(m.id); await navigator.clipboard.writeText(link); setCopiedLink(m.id); } catch (err) { setDataError((err as Error).message); } }} style={{ color: "#38bdf8", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", cursor: "pointer" }}>{copiedLink === m.id ? "Copiado" : "Copiar enlace"}</button>
+                              {!isOperator && (<button onClick={async () => { try { const link = manualEmail ? (await prepareManualInvitation(m.id)).activationLink : await createInvitationLink(m.id); await navigator.clipboard.writeText(link); setCopiedLink(m.id); } catch (err) { setDataError((err as Error).message); } }} style={{ color: "#38bdf8", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", cursor: "pointer" }}>{copiedLink === m.id ? "Copiado" : "Copiar enlace"}</button>)}
                               {/* Direct Send Invitation Button */}
                               <button
                                 onClick={() => handleSendSingleDirect(m)}
                                 disabled={isSending}
-                                title={manualEmail ? "Preparar correo para enviarlo desde tu cuenta" : "Enviar invitación por correo ahora"}
+                                title={!serverEmailReady ? "Ver entrega segura preparada" : "Enviar invitación por correo ahora"}
                                 style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", padding: "0.3rem 0.5rem", background: "#0284c7", border: "none", borderRadius: "4px", color: "#ffffff", fontSize: "0.75rem", cursor: isSending ? "not-allowed" : "pointer" }}
                               >
                                 {isSending ? <RefreshCw className="animate-spin" size={12} /> : <Send size={12} />}
-                                <span>{isSending ? "Preparando..." : manualEmail ? "Preparar correo" : "Enviar"}</span>
+                                <span>{isSending ? "Enviando..." : !serverEmailReady ? "Preparar correo" : "Enviar"}</span>
                               </button>
 
                               {!isOperator && (<button
@@ -1611,7 +1611,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                     </div>
                   </div>
 
-                  {manualEmail && <ManualInvitationActions key={previewTarget.id} email={previewData} />}
+                  {previewData.requiresServerDelivery ? <div role="status" style={{ border: "1px solid #0284c7", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}><p>La GhostAI Key se incluye en el correo de este miembro.</p><p>{serverEmailReady ? "Revisa el destinatario antes de enviar." : "Entrega preparada. OWNER debe configurar el proveedor de correo antes de enviar."}</p></div> : manualEmail && <ManualInvitationActions key={previewTarget.id} email={previewData} />}
 
                   {/* Format Toggle */}
                   <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -1648,7 +1648,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   )}
 
                   <div style={{ marginTop: "0.75rem", fontSize: "0.75rem", color: "#64748b" }}>
-                    ℹ️ Criptoseguridad: Este email solo incluye el token de activación de un solo uso. La GhostAI Key permanente no viaja en el correo.
+                    Guarda la key y envía este correo únicamente al miembro indicado.
                   </div>
                 </>
               ) : null}
@@ -1666,9 +1666,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               >
                 Cerrar
               </button>
-              {!manualEmail && (<button
+              {serverEmailReady && (<button
                 type="button"
-                disabled={isSendingFromPreview || loadingPreview}
+                disabled={isSendingFromPreview || loadingPreview || !previewData?.deliveryReady}
                 onClick={handleSendFromPreview}
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1.25rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: isSendingFromPreview ? "not-allowed" : "pointer" }}
               >
@@ -1712,7 +1712,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             <div style={{ background: "rgba(56, 189, 248, 0.08)", border: "1px solid #0284c7", borderRadius: "6px", padding: "0.75rem", fontSize: "0.8rem", color: "#93c5fd", marginBottom: "1.25rem" }}>
               ✓ Procesamiento individual por miembro (seguridad batch). Si un correo falla, los demás continúan.<br />
               ✓ Cuerpo HTML dark premium sin adjuntos .html.<br />
-              ✓ Cero GhostAI Keys permanentes en el email.
+              ✓ La key personal está incluida en el correo del miembro.
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>

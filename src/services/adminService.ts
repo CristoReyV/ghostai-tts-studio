@@ -338,6 +338,10 @@ export interface AdminAuditLog {
 }
 
 export interface EmailPreviewData {
+  deliveryType?: "INVITATION" | "ACCESS_REPLACEMENT";
+  keyRedacted?: boolean;
+  requiresServerDelivery?: boolean;
+  deliveryReady?: boolean;
   to: string;
   name: string;
   plan: string;
@@ -596,7 +600,7 @@ export async function activateMember(token: string): Promise<ActivationResponse>
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error?.message || "No se pudo activar el acceso. El enlace puede haber expirado o ya fue utilizado.");
+    throw Object.assign(new Error(data.error?.message || "No se pudo activar el acceso. El enlace puede haber expirado o ya fue utilizado."), { code: data.error?.code });
   }
 
   return await res.json();
