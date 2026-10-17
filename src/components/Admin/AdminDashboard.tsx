@@ -1200,9 +1200,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 >
                                   Revocar
                                 </button>
-                              ) : (
+                              ) : m.status === "revoked" ? (
                                 <span style={{ fontSize: "0.75rem", color: "#f43f5e" }}>Revocado</span>
-                              )}
+                              ) : null}
                             </div>
                           </td>
                         </tr>
