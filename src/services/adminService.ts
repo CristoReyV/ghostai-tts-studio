@@ -126,12 +126,11 @@ export async function fetchAdminSession(): Promise<{
  */
 export async function logoutAdmin(): Promise<void> {
   const baseUrl = getGatewayBaseUrl();
-  try {
-    await fetch(`${baseUrl}/api/admin/auth/logout`, {
+  const res = await fetch(`${baseUrl}/api/admin/auth/logout`, {
       method: "POST",
       credentials: "include",
-    });
-  } catch (_) {}
+  });
+  if (!res.ok) throw new Error("No se pudo cerrar la sesión. Intenta de nuevo.");
 }
 
 /**

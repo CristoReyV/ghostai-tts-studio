@@ -282,7 +282,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // 4. Handle Logout
   const handleLogout = async () => {
-    await logoutAdmin();
+    try { await logoutAdmin(); }
+    catch (err) { setDataError((err as Error).message); return; }
+    setOperatorKey(null);
+    setPreviewTarget(null);
+    setPreviewData(null);
+    setOneTimeToken(null);
+    setGeneratedInvite(null);
+    setCreatedAdminInvite(null);
+    setSelectedMemberIds(new Set());
+    setActiveTab("members");
     setIsAuthenticated(false);
     setAdminUser(null);
     setMembers([]);
