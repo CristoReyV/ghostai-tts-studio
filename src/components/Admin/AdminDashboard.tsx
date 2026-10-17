@@ -17,6 +17,7 @@
  *      * Zero permanent GhostAI keys in email bodies.
  */
 
+import { ManualInvitationActions } from "./ManualInvitationActions";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Shield,
@@ -45,6 +46,10 @@ import {
 } from "lucide-react";
 import {
   loginAdmin,
+  prepareManualInvitation,
+  manageOperatorKey,
+  createInvitationLink,
+  auditBulkPreview,
   logoutAdmin,
   fetchAdminSession,
   fetchAdminClients,
@@ -77,6 +82,7 @@ import {
   type AdminAuditLog,
   type EmailPreviewData,
   type SendInvitationResult,
+  type EmailConfigStatus,
 } from "../../services/adminService";
 import {
   parseCsv,
@@ -93,11 +99,17 @@ interface AdminDashboardProps {
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }) => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [adminUser, setAdminUser] = useState<AdminUserIdentity | null>(null);
+  const [emailConfig, setEmailConfig] = useState<EmailConfigStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<"members" | "admins" | "audit" | "clients" | "tokens" | "operations">("members");
 
+  const manualEmail = emailConfig?.deliveryMode === "manual" || !emailConfig?.isLive;
+  const isOwner = adminUser?.role === "owner";
+  const isOperator = adminUser?.role === "operator";
+  const [operatorKey, setOperatorKey] = useState<string | null>(null);
+
   // Login form state
-  const [loginMode, setLoginMode] = useState<"token" | "credentials">("token");
+  const [loginMode, setLoginMode] = useState<"token" | "credentials" | "key">("key");
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginPassword, setLoginPassword] = useState<string>("");
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -186,11 +198,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       .then((session) => {
         setIsAuthenticated(session.authenticated);
         setAdminUser(session.admin || null);
+        setEmailConfig(session.email || null);
         setLoading(false);
       })
       .catch(() => {
         setIsAuthenticated(false);
         setAdminUser(null);
+        setEmailConfig(null);
         setLoading(false);
       });
   }, []);
@@ -237,10 +251,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
     try {
       let ok = false;
-      if (loginMode === "token") {
+      if (loginMode !== "credentials") {
         const tokenVal = loginInputRef.current?.value || "";
         if (!tokenVal.trim()) return;
-        ok = await loginAdmin(tokenVal.trim());
+        if (loginInputRef.current) loginInputRef.current.value = "";
+        ok = await loginAdmin(loginMode === "key" ? { adminKey: tokenVal.trim() } : tokenVal.trim());
         if (loginInputRef.current) loginInputRef.current.value = "";
       } else {
         if (!loginEmail.trim() || !loginPassword) return;
@@ -251,6 +266,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       if (ok) {
         const session = await fetchAdminSession();
         setAdminUser(session.admin || null);
+        setEmailConfig(session.email || null);
         setIsAuthenticated(true);
       } else {
         setLoginError("Credencial administrativa inválida.");
@@ -485,7 +501,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     setLoadingPreview(true);
     setDataError(null);
     try {
-      const data = await previewMemberEmail(member.id);
+      setPreviewData(null);
+      const data = manualEmail ? await prepareManualInvitation(member.id) : await previewMemberEmail(member.id);
       setPreviewData(data);
     } catch (err) {
       setDataError((err as Error).message);
@@ -515,6 +532,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // 3. Single Send directly from Table
   const handleSendSingleDirect = async (member: AdminMember) => {
+    if (manualEmail) { await handleOpenEmailPreview(member); return; }
     setSendingMemberId(member.id);
     setDataError(null);
     try {
@@ -727,6 +745,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
           {/* Login Mode Tabs */}
           <div style={{ display: "flex", background: "#080c14", padding: "0.25rem", borderRadius: "8px", marginBottom: "1.25rem" }}>
+            <button type="button" onClick={() => setLoginMode("key")} style={{ flex: 1, color: "#38bdf8", background: "#1e293b", border: 0, borderRadius: "6px", cursor: "pointer" }}>ADMIN KEY</button>
             <button
               type="button"
               onClick={() => setLoginMode("token")}
@@ -750,15 +769,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           )}
 
           <form onSubmit={handleLoginSubmit}>
-            {loginMode === "token" ? (
+            {loginMode !== "credentials" ? (
               <div style={{ marginBottom: "1.25rem" }}>
                 <label style={{ display: "block", fontSize: "0.8rem", fontWeight: "600", color: "#cbd5e1", marginBottom: "0.5rem" }}>
-                  Master Auth Token
+                  {loginMode === "key" ? "ADMIN KEY" : "Master Auth Token"}
                 </label>
                 <input
                   ref={loginInputRef}
                   type="password"
-                  placeholder="Introduce la credencial maestra"
+                  placeholder={loginMode === "key" ? "gai_admin_…" : "Introduce la credencial maestra"}
                   autoComplete="off"
                   style={{ width: "100%", padding: "0.65rem 0.85rem", background: "#080c14", border: "1px solid #334155", borderRadius: "8px", color: "#f8fafc", fontSize: "0.9rem", boxSizing: "border-box" }}
                   required
@@ -846,9 +865,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               </span>
             ) : (
               <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.75rem", padding: "0.15rem 0.6rem", background: "rgba(56, 189, 248, 0.15)", border: "1px solid #38bdf8", color: "#38bdf8", borderRadius: "4px", fontWeight: "700" }}>
-                ADMIN
+                {isOperator ? "OPERATOR" : "ADMIN"}
               </span>
             )}
+
+            {/* Email Provider Indicator Badge (Section 12: EMAIL: LIVE / SANDBOX) */}
+            <span
+              id="admin-email-status-badge"
+              title={
+                emailConfig?.isLive
+                  ? `Proveedor activo: ${emailConfig.provider.toUpperCase()} (${emailConfig.sender})`
+                  : "Envío manual: prepara y envía desde tu cuenta de correo."
+              }
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.25rem",
+                fontSize: "0.75rem",
+                padding: "0.15rem 0.6rem",
+                borderRadius: "4px",
+                fontWeight: "700",
+                letterSpacing: "0.04em",
+                background: emailConfig?.isLive ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)",
+                border: emailConfig?.isLive ? "1px solid #10b981" : "1px solid #f59e0b",
+                color: emailConfig?.isLive ? "#34d399" : "#fbbf24",
+              }}
+            >
+              <Mail size={12} />
+              EMAIL: {manualEmail ? "ENVÍO MANUAL" : emailConfig?.isLive ? "LIVE" : "SANDBOX"}
+            </span>
 
             {/* Admin identity display */}
             <span style={{ fontSize: "0.8rem", color: "#94a3b8", marginLeft: "0.25rem" }}>
@@ -898,24 +943,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             </button>
           )}
 
-          <button
+          {!isOperator && (<button
             onClick={() => setActiveTab("clients")}
             style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "clients" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "clients" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Users size={16} /> CLIENTES ({clients.length})
-          </button>
-          <button
+          </button>)}
+          {!isOperator && (<button
             onClick={() => setActiveTab("tokens")}
             style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "tokens" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "tokens" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Key size={16} /> TOKENS ({tokens.length})
-          </button>
-          <button
+          </button>)}
+          {!isOperator && (<button
             onClick={() => setActiveTab("operations")}
             style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "operations" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "operations" ? "#38bdf8" : "#94a3b8", fontWeight: "600", cursor: "pointer", whiteSpace: "nowrap" }}
           >
             <Activity size={16} /> OPERACIÓN TTS ({operations.length})
-          </button>
+          </button>)}
         </div>
 
         {dataError && (
@@ -968,14 +1013,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                 {selectedMemberIds.size > 0 && (
                   <button
-                    onClick={() => setShowBulkSendConfirm(true)}
+                    onClick={async () => { try { await auditBulkPreview(Array.from(selectedMemberIds)); setShowBulkSendConfirm(true); } catch (err) { setDataError((err as Error).message); } }}
                     style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "linear-gradient(135deg, #0284c7 0%, #38bdf8 100%)", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: "pointer" }}
                   >
-                    <Send size={15} /> ENVIAR INVITACIONES ({selectedMemberIds.size})
+                    <Send size={15} /> {manualEmail ? "PREPARAR CORREOS" : "ENVIAR INVITACIONES"} ({selectedMemberIds.size})
                   </button>
                 )}
 
-                <button
+                {isOwner && (<button
                   onClick={() => {
                     setBulkFile(null);
                     setBulkValidation(null);
@@ -986,14 +1031,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "linear-gradient(135deg, #0284c7 0%, #2563eb 100%)", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "700", fontSize: "0.85rem", cursor: "pointer" }}
                 >
                   <Upload size={15} /> IMPORTAR MIEMBROS
-                </button>
+                </button>)}
 
-                <button
+                {isOwner && (<button
                   onClick={() => setShowMemberModal(true)}
                   style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 0.85rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", fontWeight: "600", fontSize: "0.85rem", cursor: "pointer" }}
                 >
                   <Plus size={15} /> Nuevo Miembro
-                </button>
+                </button>)}
               </div>
             </div>
 
@@ -1116,18 +1161,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 <span>Ver Email</span>
                               </button>
 
+                              <button onClick={async () => { try { const link = manualEmail ? (await prepareManualInvitation(m.id)).activationLink : await createInvitationLink(m.id); await navigator.clipboard.writeText(link); setCopiedLink(m.id); } catch (err) { setDataError((err as Error).message); } }} style={{ color: "#38bdf8", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", cursor: "pointer" }}>{copiedLink === m.id ? "Copiado" : "Copiar enlace"}</button>
                               {/* Direct Send Invitation Button */}
                               <button
                                 onClick={() => handleSendSingleDirect(m)}
                                 disabled={isSending}
-                                title="Enviar invitación por correo ahora"
+                                title={manualEmail ? "Preparar correo para enviarlo desde tu cuenta" : "Enviar invitación por correo ahora"}
                                 style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", padding: "0.3rem 0.5rem", background: "#0284c7", border: "none", borderRadius: "4px", color: "#ffffff", fontSize: "0.75rem", cursor: isSending ? "not-allowed" : "pointer" }}
                               >
                                 {isSending ? <RefreshCw className="animate-spin" size={12} /> : <Send size={12} />}
-                                <span>{isSending ? "Enviando..." : "Enviar"}</span>
+                                <span>{isSending ? "Preparando..." : manualEmail ? "Preparar correo" : "Enviar"}</span>
                               </button>
 
-                              <button
+                              {!isOperator && (<button
                                 onClick={() => {
                                   setRenewTarget(m);
                                   setRenewPlan(m.access_plan);
@@ -1136,10 +1182,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 style={{ padding: "0.3rem 0.5rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#34d399", fontSize: "0.75rem", cursor: "pointer" }}
                               >
                                 Renovar
-                              </button>
+                              </button>)}
 
-                              {m.status !== "revoked" ? (
-                                <button
+                              {m.status !== "revoked" && !isOperator ? (<button
                                   onClick={() => setRevokeTarget(m)}
                                   title="Revocar acceso"
                                   style={{ padding: "0.3rem 0.5rem", background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "4px", color: "#fda4af", fontSize: "0.75rem", cursor: "pointer" }}
@@ -1207,7 +1252,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
                     const roleBadge = u.role === "owner"
                       ? { bg: "rgba(168, 85, 247, 0.15)", text: "#c084fc", label: "OWNER" }
-                      : { bg: "rgba(56, 189, 248, 0.15)", text: "#38bdf8", label: "ADMIN" };
+                      : { bg: "rgba(56, 189, 248, 0.15)", text: "#38bdf8", label: u.role === "operator" ? "OPERATOR" : "ADMIN" };
 
                     const statusBadge = {
                       active: { bg: "rgba(16, 185, 129, 0.15)", text: "#34d399", label: "ACTIVO" },
@@ -1234,6 +1279,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                           {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "Nunca"}
                         </td>
                         <td style={{ padding: "0.75rem 1rem", textAlign: "right" }}>
+                          {u.role === "operator" && <><button onClick={async () => { if (!window.confirm("Rotar la admin key invalidará la anterior y sus sesiones. ¿Continuar?")) return; try { const r = await manageOperatorKey("rotate", u.id); setOperatorKey(r.key || null); } catch (err) { setDataError((err as Error).message); } }}>Rotar admin key</button><button onClick={async () => { if (!window.confirm("Revocar la admin key y sus sesiones. ¿Continuar?")) return; try { await manageOperatorKey("revoke", u.id); } catch (err) { setDataError((err as Error).message); } }}>Revocar admin key</button></>}
                           {u.status === "active" ? (
                             <button
                               onClick={() => handleToggleAdminStatus(u)}
@@ -1395,7 +1441,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
               <h2 style={{ fontSize: "1.1rem", margin: 0, fontWeight: "600" }}>Access Tokens</h2>
-              <button
+              {isOwner && (<button
                 onClick={() => {
                   if (clients.length > 0) setSelectedClientId(clients[0].id);
                   setShowTokenModal(true);
@@ -1403,7 +1449,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", background: "#0284c7", border: "none", borderRadius: "6px", color: "#ffffff", fontWeight: "600", fontSize: "0.85rem", cursor: "pointer" }}
               >
                 <Plus size={16} /> Generar Key Manual
-              </button>
+              </button>)}
             </div>
 
             <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflow: "hidden" }}>
@@ -1556,6 +1602,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                     </div>
                   </div>
 
+                  {manualEmail && <ManualInvitationActions key={previewTarget.id} email={previewData} />}
+
                   {/* Format Toggle */}
                   <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
                     <button
@@ -1609,7 +1657,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               >
                 Cerrar
               </button>
-              <button
+              {!manualEmail && (<button
                 type="button"
                 disabled={isSendingFromPreview || loadingPreview}
                 onClick={handleSendFromPreview}
@@ -1617,14 +1665,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               >
                 {isSendingFromPreview ? <RefreshCw className="animate-spin" size={14} /> : <Send size={14} />}
                 <span>{isSendingFromPreview ? "Enviando..." : "ENVIAR INVITACIÓN"}</span>
-              </button>
+              </button>)}
             </div>
           </div>
         </div>
       )}
 
       {/* ── MODAL: BULK SEND CONFIRMATION (SECTION 10 & 15) ──────────────────── */}
-      {showBulkSendConfirm && (
+      {showBulkSendConfirm && manualEmail && (<div role="dialog" aria-label="Preparar correos seleccionados" style={{ position: "fixed", inset: 0, background: "#080c14ee", zIndex: 135, display: "grid", placeItems: "center", padding: "1rem" }}><div style={{ background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", padding: "1.5rem", width: "min(640px, 95vw)", maxHeight: "85vh", overflowY: "auto" }}><h2>Preparar correos seleccionados</h2><p>Abre cada invitación para copiarla o enviarla desde tu correo. Cada persona recibe su propio enlace; no se envía nada automáticamente.</p>{members.filter(m => selectedMemberIds.has(m.id)).map(m => <div key={m.id} style={{ display: "flex", justifyContent: "space-between", gap: "1rem", margin: "0.75rem 0" }}><span>{m.name}<br /><small>{m.email}</small></span><button onClick={() => handleOpenEmailPreview(m)}>Preparar correo</button></div>)}<button onClick={() => setShowBulkSendConfirm(false)}>Cerrar sin enviar</button></div></div>)}
+
+      {showBulkSendConfirm && !manualEmail && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", zIndex: 140 }}>
           <div style={{ width: "100%", maxWidth: "540px", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", padding: "1.75rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
@@ -2329,7 +2379,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   Ver Email
                 </button>
 
-                <button
+                {!isOperator && (<button
                   onClick={() => {
                     setRenewTarget(detailTarget);
                     setRenewPlan(detailTarget.access_plan);
@@ -2338,9 +2388,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   style={{ padding: "0.4rem 0.75rem", background: "#10b981", border: "none", borderRadius: "6px", color: "#ffffff", fontSize: "0.8rem", fontWeight: "600", cursor: "pointer" }}
                 >
                   Renovar
-                </button>
+                </button>)}
 
-                <button
+                {isOwner && (<button
                   onClick={() => {
                     handleRegenerateKey(detailTarget);
                     setDetailTarget(null);
@@ -2348,11 +2398,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   style={{ padding: "0.4rem 0.75rem", background: "#334155", border: "none", borderRadius: "6px", color: "#cbd5e1", fontSize: "0.8rem", cursor: "pointer" }}
                 >
                   Regenerar Key
-                </button>
+                </button>)}
               </div>
 
-              {detailTarget.status !== "revoked" && (
-                <button
+              {detailTarget.status !== "revoked" && !isOperator && (<button
                   onClick={() => {
                     setRevokeTarget(detailTarget);
                     setDetailTarget(null);
@@ -2462,6 +2511,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           </div>
         </div>
       )}
+
+      {isOwner && operatorKey && <div role="dialog" aria-label="Nueva admin key" style={{ position: "fixed", inset: 0, background: "#080c14ee", zIndex: 200, display: "grid", placeItems: "center" }}><div style={{ background: "#0f172a", padding: "2rem", maxWidth: "90vw", overflowWrap: "anywhere" }}><h2>Admin key · solo se muestra una vez</h2><code>{operatorKey}</code><p>Guárdala antes de cerrar. El servidor conserva únicamente su hash.</p><button onClick={() => navigator.clipboard.writeText(operatorKey)}>Copiar admin key</button><button onClick={() => setOperatorKey(null)}>Cerrar</button></div></div>}
 
       {/* ── MODAL: CREAR CLIENTE (LEGACY) ─────────────────────────────────── */}
       {showClientModal && (

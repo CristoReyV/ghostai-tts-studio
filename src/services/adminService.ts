@@ -50,7 +50,7 @@ export interface AdminTtsSession {
  * Frontend caller must immediately wipe credential input from memory and DOM.
  */
 export async function loginAdmin(
-  credentials: string | { email: string; password: string }
+  credentials: string | { email: string; password: string } | { adminKey: string }
 ): Promise<boolean> {
   const baseUrl = getGatewayBaseUrl();
   const body = typeof credentials === "string" ? { adminToken: credentials } : credentials;
@@ -88,10 +88,21 @@ export async function checkAdminStatus(): Promise<boolean> {
   }
 }
 
+export interface EmailConfigStatus {
+  provider: "resend" | "smtp" | "sandbox";
+  isLive: boolean;
+  deliveryMode?: "manual" | "provider";
+  sender: string;
+}
+
 /**
- * Fetches full admin session info including role and identity.
+ * Fetches full admin session info including role, identity, and email provider status.
  */
-export async function fetchAdminSession(): Promise<{ authenticated: boolean; admin?: AdminUserIdentity }> {
+export async function fetchAdminSession(): Promise<{
+  authenticated: boolean;
+  admin?: AdminUserIdentity;
+  email?: EmailConfigStatus;
+}> {
   const baseUrl = getGatewayBaseUrl();
   try {
     const res = await fetch(`${baseUrl}/api/admin/auth/status`, {
@@ -103,6 +114,7 @@ export async function fetchAdminSession(): Promise<{ authenticated: boolean; adm
     return {
       authenticated: data.authenticated === true,
       admin: data.admin || undefined,
+      email: data.email || undefined,
     };
   } catch (_) {
     return { authenticated: false };
@@ -299,14 +311,14 @@ export interface AdminUserIdentity {
   id: string;
   name: string;
   email: string;
-  role: "owner" | "admin";
+  role: "owner" | "admin" | "operator";
 }
 
 export interface AdminUser {
   id: string;
   name: string;
   email: string;
-  role: "owner" | "admin";
+  role: "owner" | "admin" | "operator";
   status: "pending" | "active" | "disabled";
   created_at: string;
   invited_at: string | null;
@@ -745,3 +757,27 @@ export async function activateAdminAccount(
   return await res.json();
 }
 
+
+export async function manageOperatorKey(action: "rotate" | "revoke", adminId: string): Promise<{ key?: string }> {
+ const res = await fetch(getGatewayBaseUrl() + "/api/admin/keys", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, adminId }) });
+ const data = await res.json();
+ if (!res.ok) throw new Error(data.error?.message || "Error gestionando admin key.");
+ return data;
+}
+export async function createInvitationLink(memberId: string): Promise<string> {
+ const res = await fetch(getGatewayBaseUrl() + "/api/admin/members/invite", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberId }) });
+ const data = await res.json();
+ if (!res.ok || !data.invitations?.[0]?.activationLink) throw new Error(data.errors?.[0]?.error || data.error?.message || "No se pudo crear el enlace.");
+ return data.invitations[0].activationLink;
+}
+export async function auditBulkPreview(memberIds: string[]): Promise<void> {
+ const res = await fetch(getGatewayBaseUrl() + "/api/admin/members/send-invitation", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberIds, previewOnly: true }) });
+ if (!res.ok) throw new Error("No se pudo preparar el envío.");
+}
+
+export async function prepareManualInvitation(memberId: string): Promise<EmailPreviewData> {
+ const res = await fetch(getGatewayBaseUrl() + "/api/admin/members/prepare-email", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberId }) });
+ const data = await res.json();
+ if (!res.ok) throw new Error(data.error?.message || "No se pudo preparar el correo.");
+ return data.preview;
+}
