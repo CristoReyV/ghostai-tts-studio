@@ -18,6 +18,9 @@
  */
 
 import { ManualInvitationActions } from "./ManualInvitationActions";
+import { MemberOperationDetails, MemberOperationalBadge } from "./MemberOperationDetails";
+import { getMemberOperationalState, matchesMemberFilters, EMAIL_TYPE_LABELS } from "../../services/memberOperations";
+import { markMemberEmail } from "../../services/adminService";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Shield,
@@ -160,6 +163,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // Email Experience 02 Modals & States
   const [previewTarget, setPreviewTarget] = useState<AdminMember | null>(null);
+  const [needsActionFilter, setNeedsActionFilter] = useState(false);
+  const [emailHandedOff, setEmailHandedOff] = useState(false);
+  const [trackingBusy, setTrackingBusy] = useState(false);
+  const [trackingFeedback, setTrackingFeedback] = useState("");
+  const [undoEmailTarget, setUndoEmailTarget] = useState<AdminMember | null>(null);
   const [previewData, setPreviewData] = useState<EmailPreviewData | null>(null);
   const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
   const [previewViewMode, setPreviewViewMode] = useState<"html" | "text">("html");
@@ -287,6 +295,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     setOperatorKey(null);
     setPreviewTarget(null);
     setPreviewData(null);
+    setDetailTarget(null);
+    setUndoEmailTarget(null);
+    setTrackingFeedback("");
+    setEmailHandedOff(false);
     setOneTimeToken(null);
     setGeneratedInvite(null);
     setCreatedAdminInvite(null);
@@ -506,6 +518,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // 1. Preview Email Modal
   const handleOpenEmailPreview = async (member: AdminMember) => {
+    setDetailTarget(null);
+    setEmailHandedOff(false);
+    setTrackingFeedback("");
     setPreviewTarget(member);
     setLoadingPreview(true);
     setDataError(null);
@@ -519,6 +534,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     } finally {
       setLoadingPreview(false);
     }
+  };
+
+  const handleEmailTracking = async (member: AdminMember, sent: boolean, confirmed = false) => {
+    if (!sent && !confirmed) { setUndoEmailTarget(member); setTrackingFeedback(""); return; }
+    setTrackingBusy(true);
+    setTrackingFeedback("");
+    try {
+      const keyId = sent ? previewData?.keyId : member.key_id;
+      if (!keyId) throw new Error("Actualiza y prepara el correo de nuevo.");
+      const updated = await markMemberEmail(member.id, keyId, sent ? "sent" : "not_sent", sent ? previewData?.expectedSentAt ?? null : member.last_email_sent_at || null);
+      setMembers(current => current.map(m => m.id === updated.id ? updated : m));
+      setDetailTarget(current => current?.id === updated.id ? updated : current);
+      setPreviewTarget(current => current?.id === updated.id ? updated : current);
+      setPreviewData(current => current ? { ...current, expectedSentAt: updated.last_email_sent_at || null } : current);
+      setEmailHandedOff(false);
+      setUndoEmailTarget(null);
+      setTrackingFeedback(sent ? "Envío registrado. GhostAI no envió ningún correo." : "Envío desmarcado. La auditoría se conserva.");
+    } catch (err) { setTrackingFeedback((err as Error).message); }
+    finally { setTrackingBusy(false); }
   };
 
   // 2. Send Invitation from Preview Modal
@@ -637,20 +671,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   };
 
   // Filtered members list
-  const filteredMembers = members.filter((m) => {
-    const matchesSearch =
-      !searchQuery ||
-      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.email.toLowerCase().includes(searchQuery.toLowerCase());
-
-    const matchesPlan =
-      planFilter === "all" || m.access_plan === planFilter;
-
-    const matchesStatus =
-      statusFilter === "all" || m.status === statusFilter;
-
-    return matchesSearch && matchesPlan && matchesStatus;
-  });
+  const actionCount = members.filter(m => getMemberOperationalState(m).needsAction).length;
+  const filteredMembers = members.filter(m => matchesMemberFilters(m, { search: searchQuery, plan: planFilter, status: statusFilter, needsAction: needsActionFilter }));
 
   const allSelected =
     filteredMembers.length > 0 &&
@@ -671,63 +693,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelectedMemberIds(next);
-  };
-
-  // Helper for Member Email Status Badge
-  const renderEmailStatusBadge = (m: AdminMember) => {
-    if (m.status === "active" && m.last_email_status !== "not_sent" && m.last_email_status !== "failed") {
-      return (
-        <div>
-          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", letterSpacing: "0.03em" }}>
-            ACTIVADO
-          </span>
-          {m.activated_at && (
-            <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "0.15rem" }}>
-              {new Date(m.activated_at).toLocaleDateString()}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    const emailStatus = m.last_email_status || (m.status === "invited" ? "sent" : "not_sent");
-
-    if (emailStatus === "sent") {
-      return (
-        <div>
-          <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", letterSpacing: "0.03em" }}>
-            ENVIADA
-          </span>
-          {m.last_email_sent_at && (
-            <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "0.15rem" }}>
-              {new Date(m.last_email_sent_at).toLocaleDateString()}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    if (emailStatus === "failed") {
-      return (
-        <div>
-          <span
-            title={m.last_email_error || "Error en el envío"}
-            style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "800", background: "rgba(244, 63, 94, 0.15)", color: "#fda4af", letterSpacing: "0.03em", cursor: "help" }}
-          >
-            ERROR
-          </span>
-          <div style={{ fontSize: "0.7rem", color: "#fda4af", marginTop: "0.15rem", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {m.last_email_error || "Fallo"}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <span style={{ display: "inline-block", padding: "0.2rem 0.5rem", borderRadius: "4px", fontSize: "0.75rem", fontWeight: "700", background: "#1e293b", color: "#64748b", letterSpacing: "0.03em" }}>
-        NO ENVIADA
-      </span>
-    );
   };
 
   // Loading Screen
@@ -981,9 +946,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         {/* ── TAB: MIEMBROS (PRIMARY) ────────────────────────────────────── */}
         {activeTab === "members" && (
           <div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+              <button aria-pressed={needsActionFilter} onClick={() => setNeedsActionFilter(true)} style={{ color: "#fcd34d", background: needsActionFilter ? "#422006" : "#1e293b", border: "1px solid #a16207", borderRadius: "7px", padding: "0.65rem", fontWeight: 750, cursor: "pointer" }}>NECESITAN ACCIÓN: {actionCount}</button>
+              {needsActionFilter && <><span style={{ color: "#fcd34d", fontSize: "0.8rem" }}>Filtro NECESITA ACCIÓN activo</span><button onClick={() => setNeedsActionFilter(false)} style={{ color: "#cbd5e1", background: "#1e293b", border: "1px solid #475569", padding: "0.5rem", borderRadius: "6px", cursor: "pointer" }}>Mostrar todos</button></>}
+            </div>
             {/* Top Toolbar */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", marginBottom: "1.25rem" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1, minWidth: "280px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flex: 1, minWidth: 0, flexWrap: "wrap" }}>
                 <div style={{ position: "relative", flex: 1, maxWidth: "340px" }}>
                   <Search size={15} style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
                   <input
@@ -1068,7 +1037,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                     <th style={{ padding: "0.75rem 0.75rem" }}>Correo</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Plan</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Estado</th>
-                    <th style={{ padding: "0.75rem 0.75rem" }}>Estado Correo</th>
+                    <th style={{ padding: "0.75rem 0.75rem" }}>Acción / estado operativo</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Key</th>
                     <th style={{ padding: "0.75rem 0.75rem" }}>Vence</th>
                     <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Acciones</th>
@@ -1150,7 +1119,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                             </span>
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem" }}>
-                            {renderEmailStatusBadge(m)}
+                            <MemberOperationalBadge member={m} />
+                            <div style={{ fontSize: "0.7rem", color: "#94a3b8", marginTop: "0.25rem" }}>{m.last_email_status === "sent" && m.last_email_sent_at ? "CORREO ENVIADO" : m.last_email_status === "failed" ? "ERROR DE CORREO" : "CORREO NO ENVIADO"}</div>
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem", fontFamily: "monospace", fontSize: "0.8rem", color: "#94a3b8" }}>
                             {maskedKey}
@@ -1162,12 +1132,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                             <div style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
                               {/* Preview Email Button */}
                               <button
-                                onClick={() => handleOpenEmailPreview(m)}
-                                title="Previsualizar correo HTML de invitación"
+                                onClick={() => { setDetailTarget(m); setTrackingFeedback(""); }}
+                                title="Ver detalle y operación del miembro"
                                 style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", padding: "0.3rem 0.5rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#38bdf8", fontSize: "0.75rem", cursor: "pointer" }}
                               >
                                 <Eye size={12} />
-                                <span>Ver Email</span>
+                                <span>Detalle</span>
                               </button>
 
                               {!isOperator && (<button onClick={async () => { try { const link = manualEmail ? (await prepareManualInvitation(m.id)).activationLink : await createInvitationLink(m.id); await navigator.clipboard.writeText(link); setCopiedLink(m.id); } catch (err) { setDataError((err as Error).message); } }} style={{ color: "#38bdf8", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", cursor: "pointer" }}>{copiedLink === m.id ? "Copiado" : "Copiar enlace"}</button>)}
@@ -1564,6 +1534,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       </div>
 
       {/* ── MODAL: EMAIL PREVIEW (SECTION 9) ─────────────────────────────────── */}
+      {undoEmailTarget && <div role="alertdialog" aria-modal="true" aria-labelledby="undo-email-title" style={{ position: "fixed", inset: 0, zIndex: 200, display: "grid", placeItems: "center", padding: "1rem", background: "#080c14ee" }}><div style={{ width: "min(460px, 100%)", padding: "1.5rem", border: "1px solid #64748b", borderRadius: "10px", background: "#0f172a" }}><h3 id="undo-email-title">¿Desmarcar este envío?</h3><p style={{ color: "#cbd5e1" }}>Se marcará como no enviado el correo de {undoEmailTarget.name}. El correo externo no se puede retirar. La corrección quedará en auditoría.</p>{trackingFeedback && <p role="status">{trackingFeedback}</p>}<div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}><button autoFocus disabled={trackingBusy} onClick={() => setUndoEmailTarget(null)} style={{ padding: "0.65rem", color: "#e2e8f0", border: "1px solid #475569", borderRadius: "6px", background: "#1e293b" }}>Cancelar</button><button disabled={trackingBusy} onClick={() => handleEmailTracking(undoEmailTarget, false, true)} style={{ padding: "0.65rem", border: 0, borderRadius: "6px", background: "#0369a1", color: "white" }}>{trackingBusy ? "GUARDANDO..." : "CONFIRMAR DESMARCADO"}</button></div></div></div>}
       {previewTarget && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", zIndex: 140 }}>
           <div style={{ width: "100%", maxWidth: "720px", maxHeight: "90vh", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)" }}>
@@ -1572,7 +1543,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                 <Mail className="text-cyan-400" size={20} />
                 <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: "700", color: "#f8fafc" }}>
-                  Vista Previa de Invitación — {previewTarget.name}
+                  Preparar correo — {previewTarget.name}
                 </h3>
               </div>
               <button
@@ -1611,7 +1582,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                     </div>
                   </div>
 
-                  {previewData.requiresServerDelivery ? <div role="status" style={{ border: "1px solid #0284c7", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}><p>La GhostAI Key se incluye en el correo de este miembro.</p><p>{serverEmailReady ? "Revisa el destinatario antes de enviar." : "Entrega preparada. OWNER debe configurar el proveedor de correo antes de enviar."}</p></div> : manualEmail && <ManualInvitationActions key={previewTarget.id} email={previewData} />}
+                  <MemberOperationDetails member={previewTarget} busy={trackingBusy} onUndo={() => handleEmailTracking(previewTarget, false)} />
+                  <p style={{ color: "#7dd3fc", fontSize: "0.85rem" }}>Tipo de correo: {previewData.emailType ? EMAIL_TYPE_LABELS[previewData.emailType] : "Acceso"}</p>
+                  {previewData.requiresServerDelivery ? <div role="status" style={{ border: "1px solid #0284c7", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}><p>La GhostAI Key se incluye en el correo de este miembro.</p><p>{serverEmailReady ? "Revisa el destinatario antes de enviar." : "Entrega preparada. OWNER debe configurar el proveedor de correo antes de enviar."}</p></div> : manualEmail && <ManualInvitationActions key={previewTarget.id} email={previewData} onHandoff={() => setEmailHandedOff(true)} />}
+                  {manualEmail && <div style={{ margin: "1rem 0", padding: "0.85rem", border: "1px solid #334155", borderRadius: "8px" }}><p style={{ fontSize: "0.85rem", color: "#cbd5e1" }}>Cuando hayas enviado el correo desde tu cuenta, registra la confirmación aquí. Copiar o abrir tu correo no lo marca como enviado.</p><button disabled={!emailHandedOff || trackingBusy || !previewData.keyId} onClick={() => handleEmailTracking(previewTarget, true)} style={{ padding: "0.65rem", border: 0, borderRadius: "6px", background: emailHandedOff ? "#047857" : "#334155", color: "#fff", cursor: emailHandedOff && !trackingBusy ? "pointer" : "not-allowed" }}>{trackingBusy ? "GUARDANDO..." : "MARCAR COMO ENVIADO"}</button></div>}
+                  {trackingFeedback && <p role="status" style={{ color: "#7dd3fc" }}>{trackingFeedback}</p>}
 
                   {/* Format Toggle */}
                   <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
@@ -2317,7 +2292,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             </div>
 
             {/* Attributes Grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "0.75rem", marginBottom: "1.5rem" }}>
+            <MemberOperationDetails member={detailTarget} busy={trackingBusy} onUndo={() => handleEmailTracking(detailTarget, false)} />
+            {trackingFeedback && <p role="status" style={{ color: "#7dd3fc" }}>{trackingFeedback}</p>}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0.75rem", marginBottom: "1.5rem", overflowWrap: "anywhere" }}>
               <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
                 <span style={{ display: "block", fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Nombre</span>
                 <span style={{ fontSize: "0.9rem", fontWeight: "600", color: "#f8fafc" }}>{detailTarget.name}</span>
@@ -2362,7 +2339,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>{detailTarget.expires_at ? new Date(detailTarget.expires_at).toLocaleString() : "—"}</span>
               </div>
 
-              <div style={{ gridColumn: "span 2", background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
+              <div style={{ gridColumn: "1 / -1", background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
                 <span style={{ display: "block", fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Key ID & Public Hint</span>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "#38bdf8" }}>

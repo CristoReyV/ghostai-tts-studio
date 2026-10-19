@@ -13,7 +13,8 @@ describe("manual invitation handoff", () => {
     const html = renderToStaticMarkup(<ManualInvitationActions email={draft} />);
     expect(html).toContain("Abrir mi correo");
     expect(html).toContain("Copiar con formato");
-    expect(html).toContain("no confirma ni registra el envío externo");
+    expect(html).toContain("no confirma el envío externo");
+    expect(html).toContain("MARCAR COMO ENVIADO");
   });
   it("exchanges scoped key once and prepares without calling send", async () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ authenticated: true, preview: draft }) });

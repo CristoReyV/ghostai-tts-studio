@@ -286,6 +286,12 @@ export async function fetchAdminTtsOperations(): Promise<AdminTtsSession[]> {
 // ── Member Access Management Services ────────────────────────────────
 
 export interface AdminMember {
+  operational?: MemberOperationalState;
+  last_email_type?: MemberEmailType | null;
+  last_email_key_id?: string | null;
+  last_email_sent_by_name?: string | null;
+  last_email_sent_by_role?: string | null;
+  last_renewed_at?: string | null;
   id: string;
   client_id: string;
   key_id: string | null;
@@ -338,7 +344,11 @@ export interface AdminAuditLog {
 }
 
 export interface EmailPreviewData {
-  deliveryType?: "INVITATION" | "ACCESS_REPLACEMENT";
+  memberId?: string;
+  keyId?: string;
+  expectedSentAt?: string | null;
+  emailType?: MemberEmailType;
+  deliveryType?: "INVITATION" | "ACCESS_REPLACEMENT" | "ACTIVE_ACCESS";
   keyRedacted?: boolean;
   requiresServerDelivery?: boolean;
   deliveryReady?: boolean;
@@ -351,6 +361,26 @@ export interface EmailPreviewData {
   text: string;
   activationLink: string;
   invitationExpiresAt: string;
+}
+
+export type MemberEmailType = "NEW_ACCESS" | "ACCESS_REPLACEMENT" | "RESEND" | "RENEWAL";
+export interface MemberOperationalState {
+  status: "READY_TO_SEND" | "SENT_PENDING_ACTIVATION" | "ACTIVE" | "ACCESS_REISSUED_NEEDS_RESEND" | "EXPIRES_SOON" | "EXPIRED" | "REVOKED" | "NEEDS_REVIEW";
+  label: string;
+  recommendedAction: string;
+  severity: "muted" | "danger" | "attention" | "info" | "success";
+  needsAction: boolean;
+  emailType: MemberEmailType;
+}
+
+export async function markMemberEmail(memberId: string, keyId: string, status: "sent" | "not_sent", expectedSentAt: string | null): Promise<AdminMember> {
+  const response = await fetch(`${getGatewayBaseUrl()}/api/admin/members/mark-email`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ memberId, keyId, status, expectedSentAt }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "No se pudo registrar el correo.");
+  return data.member;
 }
 
 export interface SendInvitationResult {
