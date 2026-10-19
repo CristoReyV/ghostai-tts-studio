@@ -6,11 +6,12 @@
  */
 
 import JSZip from "jszip";
+import {accessPlanLabel} from "./accessPlans";
 
 export interface ParsedMemberRow {
   name: string;
   email: string;
-  accessPlan: "monthly" | "annual" | null;
+  accessPlan: "monthly" | "annual" | "lifetime" | null;
   rawPlan: string;
 }
 
@@ -18,7 +19,7 @@ export interface ValidatedMemberRow {
   rowNumber: number;
   name: string;
   email: string;
-  accessPlan: "monthly" | "annual" | null;
+  accessPlan: "monthly" | "annual" | "lifetime" | null;
   planLabel: string;
   validationStatus: "Válido" | "YA EXISTE" | "Correo inválido" | "Fila incompleta" | "Tipo de acceso desconocido" | "Duplicado en archivo";
   isValid: boolean;
@@ -34,6 +35,7 @@ export interface ValidationSummary {
   errorCount: number;
   monthlyCount: number;
   annualCount: number;
+  lifetimeCount: number;
   rows: ValidatedMemberRow[];
 }
 
@@ -49,15 +51,16 @@ function normalizeHeader(str: string): string {
     .trim();
 }
 
-export function normalizePlan(val: string): "monthly" | "annual" | null {
+export function normalizePlan(val: string): "monthly" | "annual" | "lifetime" | null {
   if (!val) return null;
-  const clean = val.toLowerCase().trim();
+  const clean = val.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ");
   if (clean === "mensual" || clean === "monthly" || clean === "mes" || clean === "1 mes") {
     return "monthly";
   }
   if (clean === "anual" || clean === "annual" || clean === "ano" || clean === "año" || clean === "1 ano" || clean === "1 año") {
     return "annual";
   }
+  if (["lifetime","de por vida","vitalicio","vitalicia"].includes(clean)) return "lifetime";
   return null;
 }
 
@@ -324,6 +327,7 @@ export function validateMemberRows(
   let errorCount = 0;
   let monthlyCount = 0;
   let annualCount = 0;
+  let lifetimeCount = 0;
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -331,7 +335,7 @@ export function validateMemberRows(
     const name = (r.name || "").trim();
     const email = (r.email || "").trim();
     const plan = r.accessPlan;
-    const planLabel = plan === "annual" ? "Anual" : plan === "monthly" ? "Mensual" : r.rawPlan || "Desconocido";
+    const planLabel = plan ? accessPlanLabel(plan) : r.rawPlan || "Desconocido";
 
     let validationStatus: ValidatedMemberRow["validationStatus"] = "Válido";
     let isValid = false;
@@ -349,7 +353,7 @@ export function validateMemberRows(
       errorCount++;
     } else if (!plan) {
       validationStatus = "Tipo de acceso desconocido";
-      errorMessage = `Tipo de acceso '${r.rawPlan}' no reconocido. Debe ser Mensual o Anual.`;
+      errorMessage = `Tipo de acceso '${r.rawPlan}' no reconocido. Debe ser Mensual, Anual o De por vida.`;
       errorCount++;
     } else if (seenEmailsInFile.has(email.toLowerCase())) {
       validationStatus = "Duplicado en archivo";
@@ -368,6 +372,7 @@ export function validateMemberRows(
       validCount++;
       if (plan === "monthly") monthlyCount++;
       if (plan === "annual") annualCount++;
+      if (plan === "lifetime") lifetimeCount++;
       seenEmailsInFile.add(email.toLowerCase());
     }
 
@@ -392,6 +397,7 @@ export function validateMemberRows(
     errorCount,
     monthlyCount,
     annualCount,
+    lifetimeCount,
     rows: validatedRows,
   };
 }

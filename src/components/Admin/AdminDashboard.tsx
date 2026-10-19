@@ -19,6 +19,7 @@
 
 import { ManualInvitationActions } from "./ManualInvitationActions";
 import { BillingDashboard } from "./BillingDashboard";
+import {accessPlanLabel} from "../../services/accessPlans";
 import { SheetSyncControl } from "./SheetSyncControl";
 import { fetchSheetSyncStatus } from "../../services/billingService";
 import type { BillingSyncInfo } from "../../services/billingService";
@@ -135,7 +136,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // Member search & filters
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [planFilter, setPlanFilter] = useState<"all" | "monthly" | "annual">("all");
+  const [planFilter, setPlanFilter] = useState<"all" | "monthly" | "annual" | "lifetime">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "invited" | "active" | "expired" | "revoked">("all");
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
 
@@ -152,7 +153,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [showMemberModal, setShowMemberModal] = useState<boolean>(false);
   const [newMemberName, setNewMemberName] = useState<string>("");
   const [newMemberEmail, setNewMemberEmail] = useState<string>("");
-  const [newMemberPlan, setNewMemberPlan] = useState<"monthly" | "annual">("monthly");
+  const [newMemberPlan, setNewMemberPlan] = useState<"monthly" | "annual" | "lifetime">("monthly");
   const [creatingMember, setCreatingMember] = useState<boolean>(false);
 
   // Member Action Modals
@@ -989,6 +990,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   <option value="all">Todos los planes</option>
                   <option value="monthly">Mensual</option>
                   <option value="annual">Anual</option>
+                  <option value="lifetime">De por vida</option>
                 </select>
 
                 <select
@@ -1118,7 +1120,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 color: m.access_plan === "annual" ? "#c084fc" : "#38bdf8",
                               }}
                             >
-                              {m.access_plan === "annual" ? "Anual" : "Mensual"}
+                              {accessPlanLabel(m.access_plan)}
                             </span>
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem" }}>
@@ -1145,7 +1147,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                             {maskedKey}
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem", color: "#cbd5e1", fontSize: "0.8rem" }}>
-                            {m.expires_at ? new Date(m.expires_at).toLocaleDateString() : "—"}
+                            {m.expires_at ? new Date(m.expires_at).toLocaleDateString() : m.access_plan === "lifetime" ? "Sin vencimiento" : "—"}
                           </td>
                           <td style={{ padding: "0.75rem 1rem", textAlign: "right" }}>
                             <div style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
@@ -1171,10 +1173,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 <span>{isSending ? "Enviando..." : !serverEmailReady ? "Preparar correo" : "Enviar"}</span>
                               </button>
 
-                              {!isOperator && (<button
+                              {!isOperator && m.access_plan !== "lifetime" && (<button
                                 onClick={() => {
                                   setRenewTarget(m);
-                                  setRenewPlan(m.access_plan);
+                                  setRenewPlan(m.access_plan === "annual" ? "annual" : "monthly");
                                 }}
                                 title="Renovar suscripción (+1M / +1Y)"
                                 style={{ padding: "0.3rem 0.5rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "4px", color: "#34d399", fontSize: "0.75rem", cursor: "pointer" }}
@@ -1989,7 +1991,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                       Arrastra tu archivo .xlsx o .csv aquí
                     </h4>
                     <p style={{ margin: "0 0 1rem 0", fontSize: "0.8rem", color: "#94a3b8" }}>
-                      Columnas requeridas: <strong>NOMBRE</strong>, <strong>CORREO</strong>, <strong>Tipo de Acceso</strong> (Mensual / Anual)
+                      Columnas requeridas: <strong>NOMBRE</strong>, <strong>CORREO</strong>, <strong>Tipo de Acceso</strong> (Mensual / Anual / De por vida)
                     </p>
 
                     <div style={{ display: "flex", justifyContent: "center", gap: "0.75rem", flexWrap: "wrap" }}>
@@ -2101,7 +2103,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 <td style={{ padding: "0.5rem 0.75rem", color: "#94a3b8" }}>{r.email || "—"}</td>
                                 <td style={{ padding: "0.5rem 0.75rem" }}>
                                   <span style={{ padding: "0.15rem 0.4rem", borderRadius: "4px", fontSize: "0.7rem", fontWeight: "bold", background: r.accessPlan === "annual" ? "rgba(168, 85, 247, 0.15)" : "rgba(56, 189, 248, 0.15)", color: r.accessPlan === "annual" ? "#c084fc" : "#38bdf8" }}>
-                                    {r.accessPlan === "annual" ? "Anual" : "Mensual"}
+                                    {r.accessPlan ? accessPlanLabel(r.accessPlan) : "Sin plan"}
                                   </span>
                                 </td>
                                 <td style={{ padding: "0.5rem 0.75rem" }}>
@@ -2211,7 +2213,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                 >
                   <option value="monthly">Mensual (30 días)</option>
                   <option value="annual">Anual (365 días)</option>
+                  <option value="lifetime">De por vida (sin vencimiento)</option>
                 </select>
+                {newMemberPlan === "lifetime" && <p style={{fontSize:"0.8rem",color:"#94a3b8"}}>Precio individual personalizable en Facturación → Corregir importe. El acceso no vence después de activarse.</p>}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
                 <button
@@ -2345,7 +2349,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
                 <span style={{ display: "block", fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Plan</span>
                 <span style={{ fontSize: "0.9rem", fontWeight: "bold", color: detailTarget.access_plan === "annual" ? "#c084fc" : "#38bdf8" }}>
-                  {detailTarget.access_plan === "annual" ? "Anual (365 días)" : "Mensual (30 días)"}
+                  {detailTarget.access_plan === "lifetime" ? "De por vida (sin vencimiento)" : detailTarget.access_plan === "annual" ? "Anual (365 días)" : "Mensual (30 días)"}
                 </span>
               </div>
 
@@ -2373,7 +2377,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
               <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
                 <span style={{ display: "block", fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Vencimiento</span>
-                <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>{detailTarget.expires_at ? new Date(detailTarget.expires_at).toLocaleString() : "—"}</span>
+                <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>{detailTarget.expires_at ? new Date(detailTarget.expires_at).toLocaleString() : detailTarget.access_plan === "lifetime" ? "Sin vencimiento" : "—"}</span>
               </div>
 
               <div style={{ gridColumn: "1 / -1", background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
@@ -2402,10 +2406,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   Ver Email
                 </button>
 
-                {!isOperator && (<button
+                {!isOperator && detailTarget.access_plan !== "lifetime" && (<button
                   onClick={() => {
                     setRenewTarget(detailTarget);
-                    setRenewPlan(detailTarget.access_plan);
+                    setRenewPlan(detailTarget.access_plan === "annual" ? "annual" : "monthly");
                     setDetailTarget(null);
                   }}
                   style={{ padding: "0.4rem 0.75rem", background: "#10b981", border: "none", borderRadius: "6px", color: "#ffffff", fontSize: "0.8rem", fontWeight: "600", cursor: "pointer" }}

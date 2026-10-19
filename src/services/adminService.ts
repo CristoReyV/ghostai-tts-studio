@@ -297,7 +297,7 @@ export interface AdminMember {
   key_id: string | null;
   name: string;
   email: string;
-  access_plan: "monthly" | "annual";
+  access_plan: "monthly" | "annual" | "lifetime";
   status: "pending" | "invited" | "active" | "expired" | "revoked";
   created_at: string;
   invited_at: string | null;
@@ -422,6 +422,7 @@ export interface BulkImportSummary {
   errorCount: number;
   monthlyCount: number;
   annualCount: number;
+  lifetimeCount?: number;
 }
 
 export interface BulkImportResponse {
@@ -440,7 +441,7 @@ export interface ActivationResponse {
   clientName: string;
   accessPlan: string;
   activatedAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
   memberId: string;
 }
 
@@ -468,7 +469,7 @@ export async function fetchAdminMembers(): Promise<AdminMember[]> {
 export async function createAdminMember(
   name: string,
   email: string,
-  accessPlan: "monthly" | "annual" = "monthly"
+  accessPlan: "monthly" | "annual" | "lifetime" = "monthly"
 ): Promise<{
   member: AdminMember;
   activationToken: string;

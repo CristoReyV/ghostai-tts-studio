@@ -1,9 +1,9 @@
 import { getGatewayBaseUrl } from "./gateway";
 export type PaymentStatus = "paid" | "pending" | "unknown";
-export interface BillingTransaction { id: string; member_id: string; entry_key: string; revision: number; type: string; access_plan: "monthly" | "annual"; amount_minor: number | null; currency: string | null; status: PaymentStatus; paid_at: string | null; billing_period: string | null; source: string; created_at: string; reason: string; name?: string }
-export interface BillingMember { memberId: string; name: string; email: string; plan: "monthly" | "annual"; memberStatus: string; expiresAt: string | null; amountMinor: number | null; currency: string | null; revision: number; paymentStatus: PaymentStatus; paidAt: string | null; period: string | null; entry: BillingTransaction | null; source: string | null; days?: number }
+export interface BillingTransaction { id: string; member_id: string; entry_key: string; revision: number; type: string; access_plan: "monthly" | "annual" | "lifetime"; amount_minor: number | null; currency: string | null; status: PaymentStatus; paid_at: string | null; billing_period: string | null; source: string; created_at: string; reason: string; name?: string }
+export interface BillingMember { memberId: string; name: string; email: string; plan: "monthly" | "annual" | "lifetime"; memberStatus: string; expiresAt: string | null; amountMinor: number | null; currency: string | null; revision: number; paymentStatus: PaymentStatus; paidAt: string | null; period: string | null; entry: BillingTransaction | null; source: string | null; days?: number }
 export interface BillingSyncPreview {
-  previewToken: string; sourceFingerprint: string; rows: number; validRows: number; existingMembers: number; monthly: number; annual: number; safePlanChanges: number;
+  previewToken: string; sourceFingerprint: string; rows: number; validRows: number; existingMembers: number; monthly: number; annual: number; lifetime?: number; safePlanChanges: number;
   counts: {newMembers: number; amountsUpdated: number; plansChanged: number; unchanged: number; invalid: number; missingAmounts: number; needsReview: number};
   applicableRows: number; canApply: boolean; existingNotInSheet: number;
   totals: {currency: string; beforeMinor: number; afterMinor: number; sheetMinor: number}[];
