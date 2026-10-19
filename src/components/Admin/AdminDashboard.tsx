@@ -18,6 +18,7 @@
  */
 
 import { ManualInvitationActions } from "./ManualInvitationActions";
+import { BillingDashboard } from "./BillingDashboard";
 import { MemberOperationDetails, MemberOperationalBadge } from "./MemberOperationDetails";
 import { getMemberOperationalState, matchesMemberFilters, EMAIL_TYPE_LABELS } from "../../services/memberOperations";
 import { markMemberEmail } from "../../services/adminService";
@@ -103,7 +104,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [adminUser, setAdminUser] = useState<AdminUserIdentity | null>(null);
   const [emailConfig, setEmailConfig] = useState<EmailConfigStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"members" | "admins" | "audit" | "clients" | "tokens" | "operations">("members");
+  const [activeTab, setActiveTab] = useState<"members" | "admins" | "audit" | "clients" | "tokens" | "operations" | "billing">("members");
 
   const manualEmail = emailConfig?.deliveryMode === "manual" || !emailConfig?.isLive;
   const serverEmailReady = emailConfig?.isLive === true;
@@ -900,6 +901,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             <Users size={16} /> MIEMBROS ({members.length})
           </button>
 
+          {(isOwner || isOperator) && <button onClick={() => setActiveTab("billing")} style={{ display: "flex", alignItems: "center", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "billing" ? "2px solid #73dcd6" : "2px solid transparent", color: activeTab === "billing" ? "#9af5df" : "#94a3b8", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}>FACTURACIÓN</button>}
           {/* Tab: ADMINISTRADORES (Visible ONLY to OWNER) */}
           {adminUser?.role === "owner" && (
             <button
@@ -940,6 +942,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           </button>)}
         </div>
 
+        {activeTab === "billing" && (isOwner || isOperator) && <BillingDashboard isOwner={isOwner} />}
         {dataError && (
           <div style={{ background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", color: "#fda4af", marginBottom: "1.5rem" }}>
             {dataError}

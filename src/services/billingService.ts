@@ -1,0 +1,24 @@
+import { getGatewayBaseUrl } from "./gateway";
+export type PaymentStatus = "paid" | "pending" | "unknown";
+export interface BillingTransaction { id: string; member_id: string; entry_key: string; revision: number; type: string; access_plan: "monthly" | "annual"; amount_minor: number | null; currency: string | null; status: PaymentStatus; paid_at: string | null; billing_period: string | null; source: string; created_at: string; reason: string; name?: string }
+export interface BillingMember { memberId: string; name: string; email: string; plan: "monthly" | "annual"; memberStatus: string; expiresAt: string | null; amountMinor: number | null; currency: string | null; revision: number; paymentStatus: PaymentStatus; paidAt: string | null; period: string | null; entry: BillingTransaction | null; source: string | null; days?: number }
+export interface BillingDashboardData {
+  month: string; previousMonth: string; currency: string; currencies: string[]; members: BillingMember[]; transactions: BillingTransaction[];
+  sync: { synced_at: string; metadata: { matched: number; rows: number; unknownAmounts: number; detectedColumns: Record<string,string | null>; issues: {row: number; reason: string}[] } } | null;
+  summary: { collected: number; registered: number; previousCollected: number; differencePercent: number | null; pending: number; averageTicket: number | null; annualCollected: number; monthlyCollected: number; mrr: number | null; activePayingMembers: number; newPayingMembers: number; undated: number; undatedCount: number; needsReview: number };
+  goal: { target: number | null; revision: number; progress: number | null; remaining: number | null };
+  trend: {month: string; collected: number; registered: number}[];
+  breakdown: {plan: string; members: number; collected: number; registered: number; undated: number}[];
+  renewals: BillingMember[]; recent: BillingTransaction[];
+}
+async function request(query = "", body?: Record<string, unknown>) {
+  const response = await fetch(`${getGatewayBaseUrl()}/api/admin/billing${query}`, { method: body ? "POST" : "GET", credentials: "include", headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "No se pudo cargar facturación.");
+  return data;
+}
+export async function fetchBilling(month: string, currency: string): Promise<BillingDashboardData> { return (await request(`?${new URLSearchParams({month,currency})}`)).dashboard; }
+export async function writeBilling(body: Record<string, unknown>): Promise<void> { await request("",body); }
+export function billingMoney(minor: number | null, currency: string): string { return minor === null ? "Sin datos" : new Intl.NumberFormat("es-MX", {style:"currency",currency,currencyDisplay:"narrowSymbol",minimumFractionDigits:2,maximumFractionDigits:2}).format(minor / 100) + ` ${currency}`; }
+export function billingAmountInput(text: string): number | null { if (!/^\d+([.,]\d{1,2})?$/.test(text.trim())) return null; const [units,decimals=""] = text.trim().replace(",", ".").split("."); const value = Number(units)*100+Number(decimals.padEnd(2,"0")); return Number.isSafeInteger(value)&&value<=100000000000?value:null; }
+export function localBillingMonth(date=new Date()): string { return new Intl.DateTimeFormat("en-CA",{timeZone:"America/Mexico_City",year:"numeric",month:"2-digit"}).format(date); }
