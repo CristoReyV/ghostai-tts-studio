@@ -167,7 +167,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   const [emailHandedOff, setEmailHandedOff] = useState(false);
   const [trackingBusy, setTrackingBusy] = useState(false);
   const [trackingFeedback, setTrackingFeedback] = useState("");
-  const [undoEmailTarget, setUndoEmailTarget] = useState<AdminMember | null>(null);
+  const [emailTrackingTarget, setEmailTrackingTarget] = useState<{ member: AdminMember; sent: boolean } | null>(null);
+  const trackingInFlight = useRef(false);
   const [previewData, setPreviewData] = useState<EmailPreviewData | null>(null);
   const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
   const [previewViewMode, setPreviewViewMode] = useState<"html" | "text">("html");
@@ -296,7 +297,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
     setPreviewTarget(null);
     setPreviewData(null);
     setDetailTarget(null);
-    setUndoEmailTarget(null);
+    setEmailTrackingTarget(null);
     setTrackingFeedback("");
     setEmailHandedOff(false);
     setOneTimeToken(null);
@@ -537,7 +538,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   };
 
   const handleEmailTracking = async (member: AdminMember, sent: boolean, confirmed = false) => {
-    if (!sent && !confirmed) { setUndoEmailTarget(member); setTrackingFeedback(""); return; }
+    if (trackingInFlight.current) return;
+    if (!confirmed) { setEmailTrackingTarget({ member, sent }); setTrackingFeedback(""); return; }
+    trackingInFlight.current = true;
     setTrackingBusy(true);
     setTrackingFeedback("");
     try {
@@ -549,10 +552,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       setPreviewTarget(current => current?.id === updated.id ? updated : current);
       setPreviewData(current => current ? { ...current, expectedSentAt: updated.last_email_sent_at || null } : current);
       setEmailHandedOff(false);
-      setUndoEmailTarget(null);
+      setEmailTrackingTarget(null);
       setTrackingFeedback(sent ? "Envío registrado. GhostAI no envió ningún correo." : "Envío desmarcado. La auditoría se conserva.");
     } catch (err) { setTrackingFeedback((err as Error).message); }
-    finally { setTrackingBusy(false); }
+    finally { trackingInFlight.current = false; setTrackingBusy(false); }
   };
 
   // 2. Send Invitation from Preview Modal
@@ -820,15 +823,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   return (
     <div style={{ minHeight: "100vh", backgroundColor: "#080c14", color: "#e2e8f0", display: "flex", flexDirection: "column", fontFamily: "'Outfit', sans-serif" }}>
       {/* Top Navbar */}
-      <header style={{ borderBottom: "1px solid #1e293b", background: "#0f172a", padding: "0.75rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+      <header className="admin-navbar" style={{ borderBottom: "1px solid #1e293b", background: "#0f172a", padding: "0.75rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap", minWidth: 0 }}>
           <button
             onClick={onBackToStudio}
             style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.75rem", background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", color: "#cbd5e1", fontSize: "0.8rem", cursor: "pointer" }}
           >
             <ArrowLeft size={14} /> Volver a Studio
           </button>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", minWidth: 0 }}>
             <Shield className="text-cyan-400" size={20} />
             <span style={{ fontWeight: "800", fontSize: "1.1rem", letterSpacing: "0.05em", color: "#f8fafc" }}>GHOSTAI ADMIN</span>
             
@@ -1021,7 +1024,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             </div>
 
             {/* Members Table */}
-            <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflowX: "auto" }}>
+            <p className="admin-table-scroll-hint">Desliza la tabla hacia los lados para ver el estado y las acciones.</p>
+            <div className="admin-member-table" role="region" aria-label="Tabla de miembros, desplazamiento horizontal" tabIndex={0} style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px", overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem", minWidth: "1000px" }}>
                 <thead>
                   <tr style={{ background: "#1e293b", color: "#94a3b8", textAlign: "left" }}>
@@ -1534,7 +1538,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       </div>
 
       {/* ── MODAL: EMAIL PREVIEW (SECTION 9) ─────────────────────────────────── */}
-      {undoEmailTarget && <div role="alertdialog" aria-modal="true" aria-labelledby="undo-email-title" style={{ position: "fixed", inset: 0, zIndex: 200, display: "grid", placeItems: "center", padding: "1rem", background: "#080c14ee" }}><div style={{ width: "min(460px, 100%)", padding: "1.5rem", border: "1px solid #64748b", borderRadius: "10px", background: "#0f172a" }}><h3 id="undo-email-title">¿Desmarcar este envío?</h3><p style={{ color: "#cbd5e1" }}>Se marcará como no enviado el correo de {undoEmailTarget.name}. El correo externo no se puede retirar. La corrección quedará en auditoría.</p>{trackingFeedback && <p role="status">{trackingFeedback}</p>}<div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}><button autoFocus disabled={trackingBusy} onClick={() => setUndoEmailTarget(null)} style={{ padding: "0.65rem", color: "#e2e8f0", border: "1px solid #475569", borderRadius: "6px", background: "#1e293b" }}>Cancelar</button><button disabled={trackingBusy} onClick={() => handleEmailTracking(undoEmailTarget, false, true)} style={{ padding: "0.65rem", border: 0, borderRadius: "6px", background: "#0369a1", color: "white" }}>{trackingBusy ? "GUARDANDO..." : "CONFIRMAR DESMARCADO"}</button></div></div></div>}
+      {emailTrackingTarget && (
+        <div role="alertdialog" aria-modal="true" aria-labelledby="tracking-email-title" aria-describedby="tracking-email-description"
+          onClick={event => { if (event.target === event.currentTarget && !trackingInFlight.current) setEmailTrackingTarget(null); }}
+          onKeyDown={event => { if (event.key === "Escape" && !trackingInFlight.current) { event.stopPropagation(); setEmailTrackingTarget(null); } }}
+          style={{ position: "fixed", inset: 0, zIndex: 200, display: "grid", placeItems: "center", padding: "1rem", background: "#080c14ee" }}>
+          <div style={{ width: "min(460px, 100%)", maxHeight: "90vh", overflowY: "auto", overflowWrap: "anywhere", padding: "1.5rem", border: "1px solid #64748b", borderRadius: "10px", background: "#0f172a" }}>
+            <h3 id="tracking-email-title">{emailTrackingTarget.sent ? "¿Registrar este envío?" : "¿Desmarcar este envío?"}</h3>
+            <p><strong>{emailTrackingTarget.member.name}</strong><br />{emailTrackingTarget.member.email}</p>
+            <p id="tracking-email-description" style={{ color: "#cbd5e1" }}>{emailTrackingTarget.sent
+              ? "Confirma solo si ya enviaste este correo desde tu cuenta. GhostAI registrará el envío y tu identidad en auditoría; no enviará ningún correo."
+              : "Se marcará como no enviado. El correo externo no se puede retirar. La corrección quedará en auditoría."}</p>
+            {trackingFeedback && <p role="status">{trackingFeedback}</p>}
+            <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+              <button autoFocus disabled={trackingBusy} onClick={() => setEmailTrackingTarget(null)} style={{ minHeight: "44px", padding: "0.65rem", color: "#e2e8f0", border: "1px solid #475569", borderRadius: "6px", background: "#1e293b" }}>Cancelar</button>
+              <button disabled={trackingBusy} onClick={() => handleEmailTracking(emailTrackingTarget.member, emailTrackingTarget.sent, true)} style={{ minHeight: "44px", padding: "0.65rem", border: 0, borderRadius: "6px", background: "#0369a1", color: "white" }}>{trackingBusy ? "GUARDANDO..." : emailTrackingTarget.sent ? "CONFIRMAR ENVÍO" : "CONFIRMAR DESMARCADO"}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {previewTarget && (
         <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", zIndex: 140 }}>
           <div style={{ width: "100%", maxWidth: "720px", maxHeight: "90vh", background: "#0f172a", border: "1px solid #0284c7", borderRadius: "12px", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)" }}>
