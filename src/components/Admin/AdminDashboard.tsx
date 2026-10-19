@@ -19,6 +19,9 @@
 
 import { ManualInvitationActions } from "./ManualInvitationActions";
 import { BillingDashboard } from "./BillingDashboard";
+import { SheetSyncControl } from "./SheetSyncControl";
+import { fetchSheetSyncStatus } from "../../services/billingService";
+import type { BillingSyncInfo } from "../../services/billingService";
 import { MemberOperationDetails, MemberOperationalBadge } from "./MemberOperationDetails";
 import { getMemberOperationalState, matchesMemberFilters, EMAIL_TYPE_LABELS } from "../../services/memberOperations";
 import { markMemberEmail } from "../../services/adminService";
@@ -122,6 +125,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // Data states
   const [members, setMembers] = useState<AdminMember[]>([]);
+  const [lastSheetSync, setLastSheetSync] = useState<BillingSyncInfo|null>(null);
   const [clients, setClients] = useState<AdminClient[]>([]);
   const [tokens, setTokens] = useState<AdminToken[]>([]);
   const [operations, setOperations] = useState<AdminTtsSession[]>([]);
@@ -226,6 +230,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       if (activeTab === "members") {
         const data = await fetchAdminMembers();
         setMembers(data);
+        if (isOwner || isOperator) setLastSheetSync(await fetchSheetSyncStatus());
       } else if (activeTab === "admins" && adminUser?.role === "owner") {
         const users = await fetchAdminUsers();
         setAdminUsers(users);
@@ -252,6 +257,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
       loadData();
     }
   }, [isAuthenticated, activeTab]);
+
+  async function refreshAfterSheetSync() {
+    const [freshMembers, sync] = await Promise.all([fetchAdminMembers(), fetchSheetSyncStatus()]);
+    setMembers(freshMembers);setLastSheetSync(sync);
+  }
 
   // 3. Handle Login
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -942,7 +952,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           </button>)}
         </div>
 
-        {activeTab === "billing" && (isOwner || isOperator) && <BillingDashboard isOwner={isOwner} />}
+        {activeTab === "billing" && (isOwner || isOperator) && <BillingDashboard isOwner={isOwner} onSynced={refreshAfterSheetSync} />}
         {dataError && (
           <div style={{ background: "rgba(244, 63, 94, 0.1)", border: "1px solid #f43f5e", borderRadius: "8px", padding: "0.75rem", color: "#fda4af", marginBottom: "1.5rem" }}>
             {dataError}
@@ -952,6 +962,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         {/* ── TAB: MIEMBROS (PRIMARY) ────────────────────────────────────── */}
         {activeTab === "members" && (
           <div>
+            {(isOwner || isOperator) && <div className="billing"><SheetSyncControl isOwner={isOwner} sync={lastSheetSync} onSynced={refreshAfterSheetSync}/></div>}
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
               <button aria-pressed={needsActionFilter} onClick={() => setNeedsActionFilter(true)} style={{ color: "#fcd34d", background: needsActionFilter ? "#422006" : "#1e293b", border: "1px solid #a16207", borderRadius: "7px", padding: "0.65rem", fontWeight: 750, cursor: "pointer" }}>NECESITAN ACCIÓN: {actionCount}</button>
               {needsActionFilter && <><span style={{ color: "#fcd34d", fontSize: "0.8rem" }}>Filtro NECESITA ACCIÓN activo</span><button onClick={() => setNeedsActionFilter(false)} style={{ color: "#cbd5e1", background: "#1e293b", border: "1px solid #475569", padding: "0.5rem", borderRadius: "6px", cursor: "pointer" }}>Mostrar todos</button></>}
@@ -1092,6 +1103,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                             >
                               {m.name}
                             </span>
+                            {lastSheetSync?.metadata.notInSheetMemberIds?.includes(m.id) && <small style={{display:"block",color:"#fcd34d",fontSize:"0.65rem",marginTop:"0.3rem"}}>NO ESTÁ EN TABLA ACTUAL</small>}
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem", color: "#94a3b8" }}>{m.email}</td>
                           <td style={{ padding: "0.75rem 0.75rem" }}>
