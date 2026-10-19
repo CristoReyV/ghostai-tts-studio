@@ -34,7 +34,7 @@ export function BillingDashboard({isOwner}:{isOwner:boolean}) {
         <Card label="Ingresos del mes" value={money(data.summary.collected)} note={`Cobrado confirmado · registrado en el mes: ${money(data.summary.registered)}`} accent/>
         <Card label="Meta del mes" value={data.goal.target===null?"Sin configurar":money(data.goal.target)} note={month}/>
         <Card label="Progreso" value={data.goal.progress===null?"—":`${data.goal.progress.toFixed(1)}%`} note="Sobre cobros confirmados"/>
-        <Card label="Miembros de pago" value={String(data.summary.activePayingMembers)} note="Activos con pago confirmado en esta moneda"/>
+        <Card label="Miembros activos con pago" value={String(data.summary.activePayingMembers)} note="Activos con pago confirmado en esta moneda"/>
         <Card label="Pendiente por cobrar" value={money(data.summary.pending)} note="Pendientes registrados · todos los periodos"/>
         <Card label="Ticket promedio" value={money(data.summary.averageTicket)} note="Por pago confirmado del mes"/>
       </div>
