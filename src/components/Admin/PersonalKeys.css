@@ -1,0 +1,15 @@
+.personal-keys { max-width: 1040px; margin: 1.5rem auto; color: #e2e8f0; }
+.personal-keys h2 { display: flex; align-items: center; gap: .65rem; margin-bottom: .65rem; font-size: 1.25rem; }
+.personal-keys > p { color: #a7b6cd; line-height: 1.5; }
+.personal-key-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 1rem; margin-top: 1.5rem; }
+.personal-key-grid article { min-width: 0; background: #0f172a; border: 1px solid #293b55; border-radius: 12px; padding: 1.25rem; }
+.personal-key-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.personal-key-title h3 { margin: 0; font-size: 1rem; }
+.personal-key-title span { color: #73e5bd; font-size: .7rem; font-weight: 700; }
+.personal-key-grid p { color: #a7b6cd; font-size: .8rem; line-height: 1.5; }
+.personal-key-grid code { display: block; min-height: 3.3rem; padding: .8rem; background: #080c14; color: #75d5ff; border-radius: 6px; overflow-wrap: anywhere; white-space: pre-wrap; font-size: .8rem; }
+.personal-key-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+.personal-key-actions button { display: inline-flex; align-items: center; gap: .4rem; padding: .65rem .8rem; border: 1px solid #385069; border-radius: 6px; background: #18263b; color: #e2e8f0; cursor: pointer; }
+.personal-key-actions button:last-child { background: #036c9e; border-color: #0780b4; }
+.personal-key-actions button:disabled { opacity: .5; cursor: default; }
+.personal-key-actions button:focus-visible { outline: 2px solid #75d5ff; outline-offset: 3px; }

@@ -7,6 +7,27 @@
 
 import { getGatewayBaseUrl } from "./gateway";
 
+export interface PersonalKey {
+  id: string; label: string | null; clientName: string;
+  status: "active" | "revoked"; expiresAt: string | null; canReveal: boolean;
+}
+
+export async function fetchPersonalKeys(): Promise<PersonalKey[]> {
+  const response = await fetch(`${getGatewayBaseUrl()}/api/admin/personal-keys`, { credentials: "include", cache: "no-store" });
+  if (!response.ok) throw new Error("No se pudieron cargar tus keys personales. Intenta de nuevo.");
+  return (await response.json()).keys || [];
+}
+
+export async function revealPersonalKey(keyId: string): Promise<string> {
+  const response = await fetch(`${getGatewayBaseUrl()}/api/admin/personal-keys`, {
+    method: "POST", credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keyId }),
+  });
+  if (!response.ok) throw new Error("No se pudo acceder a tu key personal. Intenta de nuevo o consulta al OWNER.");
+  const value = (await response.json()).accessKey;
+  if (typeof value !== "string" || !/^gai_live_[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$/.test(value)) throw new Error("La key personal no está disponible.");
+  return value;
+}
+
 export interface AdminClient {
   id: string;
   name: string;
