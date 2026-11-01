@@ -318,7 +318,11 @@ export interface AdminMember {
   key_id: string | null;
   name: string;
   email: string;
-  access_plan: "monthly" | "annual" | "lifetime";
+  access_plan: "monthly" | "annual" | "lifetime" | "skool";
+  skool_source_id?: string | null;
+  skool_removed_at?: string | null;
+  skool_expires_at?: string | null;
+  skool_synced_at?: string | null;
   status: "pending" | "invited" | "active" | "expired" | "revoked";
   created_at: string;
   invited_at: string | null;

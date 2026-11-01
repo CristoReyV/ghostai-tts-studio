@@ -66,7 +66,7 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({
     }
   };
 
-  const planLabel = result?.accessPlan === "lifetime" ? "De por vida" : result?.accessPlan === "annual" ? "Anual" : "Mensual";
+  const planLabel = result?.accessPlan === "skool" ? "SKOOL" : result?.accessPlan === "lifetime" ? "De por vida" : result?.accessPlan === "annual" ? "Anual" : "Mensual";
   const formattedExpires = result?.expiresAt
     ? new Date(result.expiresAt).toLocaleDateString(undefined, {
         year: "numeric",
@@ -196,7 +196,7 @@ export const ActivationScreen: React.FC<ActivationScreenProps> = ({
 
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#cbd5e1", fontSize: "0.85rem", marginBottom: "0.5rem" }}>
                 <Calendar size={15} className="text-cyan-400" />
-                <span>{result.accessPlan === "lifetime" ? "Acceso: " : "Vigente hasta: "}<strong style={{ color: "#f8fafc" }}>{result.accessPlan === "lifetime" ? "Sin vencimiento" : formattedExpires}</strong></span>
+                <span>{result.accessPlan === "lifetime" || result.accessPlan === "skool" && !result.expiresAt ? "Acceso: " : "Vigente hasta: "}<strong style={{ color: "#f8fafc" }}>{result.accessPlan === "skool" && !result.expiresAt ? "Mientras tu membresía SKOOL esté vigente" : result.accessPlan === "lifetime" ? "Sin vencimiento" : formattedExpires}</strong></span>
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#64748b", fontSize: "0.75rem" }}>

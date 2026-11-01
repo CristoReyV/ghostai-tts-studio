@@ -19,6 +19,7 @@
 
 import { ManualInvitationActions } from "./ManualInvitationActions";
 import { PersonalKeys } from "./PersonalKeys";
+import { SkoolSyncControl } from "./SkoolSyncControl";
 import { BillingDashboard } from "./BillingDashboard";
 import {accessPlanLabel} from "../../services/accessPlans";
 import { SheetSyncControl } from "./SheetSyncControl";
@@ -137,7 +138,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
   // Member search & filters
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [planFilter, setPlanFilter] = useState<"all" | "monthly" | "annual" | "lifetime">("all");
+  const [planFilter, setPlanFilter] = useState<"all" | "monthly" | "annual" | "lifetime" | "skool">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "invited" | "active" | "expired" | "revoked">("all");
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
 
@@ -967,6 +968,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
         {activeTab === "members" && (
           <div>
             {(isOwner || isOperator) && <div className="billing"><SheetSyncControl isOwner={isOwner} sync={lastSheetSync} onSynced={refreshAfterSheetSync}/></div>}
+            {(isOwner || isOperator) && <div className="billing"><SkoolSyncControl isOwner={isOwner} onSynced={refreshAfterSheetSync}/></div>}
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
               <button aria-pressed={needsActionFilter} onClick={() => setNeedsActionFilter(true)} style={{ color: "#fcd34d", background: needsActionFilter ? "#422006" : "#1e293b", border: "1px solid #a16207", borderRadius: "7px", padding: "0.65rem", fontWeight: 750, cursor: "pointer" }}>NECESITAN ACCIÓN: {actionCount}</button>
               {needsActionFilter && <><span style={{ color: "#fcd34d", fontSize: "0.8rem" }}>Filtro NECESITA ACCIÓN activo</span><button onClick={() => setNeedsActionFilter(false)} style={{ color: "#cbd5e1", background: "#1e293b", border: "1px solid #475569", padding: "0.5rem", borderRadius: "6px", cursor: "pointer" }}>Mostrar todos</button></>}
@@ -994,6 +996,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   <option value="monthly">Mensual</option>
                   <option value="annual">Anual</option>
                   <option value="lifetime">De por vida</option>
+                  <option value="skool">SKOOL</option>
                 </select>
 
                 <select
@@ -1108,7 +1111,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                             >
                               {m.name}
                             </span>
-                            {lastSheetSync?.metadata.notInSheetMemberIds?.includes(m.id) && <small style={{display:"block",color:"#fcd34d",fontSize:"0.65rem",marginTop:"0.3rem"}}>NO ESTÁ EN TABLA ACTUAL</small>}
+                            {m.access_plan !== "skool" && lastSheetSync?.metadata.notInSheetMemberIds?.includes(m.id) && <small style={{display:"block",color:"#fcd34d",fontSize:"0.65rem",marginTop:"0.3rem"}}>NO ESTÁ EN TABLA ACTUAL</small>}
+                            {m.skool_removed_at && <small style={{display:"block",color:"#fcd34d",fontSize:"0.65rem",marginTop:"0.3rem"}}>BAJA SKOOL · {new Date(m.skool_removed_at).toLocaleDateString("es-MX", { timeZone: "America/Mexico_City" })}</small>}
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem", color: "#94a3b8" }}>{m.email}</td>
                           <td style={{ padding: "0.75rem 0.75rem" }}>
@@ -1150,7 +1154,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                             {maskedKey}
                           </td>
                           <td style={{ padding: "0.75rem 0.75rem", color: "#cbd5e1", fontSize: "0.8rem" }}>
-                            {m.expires_at ? new Date(m.expires_at).toLocaleDateString() : m.access_plan === "lifetime" ? "Sin vencimiento" : "—"}
+                            {m.skool_removed_at ? "Baja de la lista" : m.expires_at || m.skool_expires_at ? new Date((m.expires_at || m.skool_expires_at)!).toLocaleDateString("es-MX", { timeZone: "America/Mexico_City" }) : m.access_plan === "skool" ? "Según lista SKOOL" : m.access_plan === "lifetime" ? "Sin vencimiento" : "—"}
                           </td>
                           <td style={{ padding: "0.75rem 1rem", textAlign: "right" }}>
                             <div style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
@@ -1176,7 +1180,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                                 <span>{isSending ? "Enviando..." : !serverEmailReady ? "Preparar correo" : "Enviar"}</span>
                               </button>
 
-                              {!isOperator && m.access_plan !== "lifetime" && (<button
+                              {!isOperator && !["lifetime", "skool"].includes(m.access_plan) && (<button
                                 onClick={() => {
                                   setRenewTarget(m);
                                   setRenewPlan(m.access_plan === "annual" ? "annual" : "monthly");
@@ -2352,7 +2356,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
               <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
                 <span style={{ display: "block", fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Plan</span>
                 <span style={{ fontSize: "0.9rem", fontWeight: "bold", color: detailTarget.access_plan === "annual" ? "#c084fc" : "#38bdf8" }}>
-                  {detailTarget.access_plan === "lifetime" ? "De por vida (sin vencimiento)" : detailTarget.access_plan === "annual" ? "Anual (365 días)" : "Mensual (30 días)"}
+                  {detailTarget.access_plan === "skool" ? "SKOOL · vigencia según la hoja" : detailTarget.access_plan === "lifetime" ? "De por vida (sin vencimiento)" : detailTarget.access_plan === "annual" ? "Anual (365 días)" : "Mensual (30 días)"}
                 </span>
               </div>
 
@@ -2380,7 +2384,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
 
               <div style={{ background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
                 <span style={{ display: "block", fontSize: "0.7rem", color: "#64748b", textTransform: "uppercase" }}>Vencimiento</span>
-                <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>{detailTarget.expires_at ? new Date(detailTarget.expires_at).toLocaleString() : detailTarget.access_plan === "lifetime" ? "Sin vencimiento" : "—"}</span>
+                <span style={{ fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>{detailTarget.skool_removed_at ? `Baja SKOOL: ${new Date(detailTarget.skool_removed_at).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}` : detailTarget.expires_at || detailTarget.skool_expires_at ? new Date((detailTarget.expires_at || detailTarget.skool_expires_at)!).toLocaleString("es-MX", { timeZone: "America/Mexico_City" }) : detailTarget.access_plan === "skool" ? "Según lista SKOOL" : detailTarget.access_plan === "lifetime" ? "Sin vencimiento" : "—"}</span>
               </div>
 
               <div style={{ gridColumn: "1 / -1", background: "#080c14", border: "1px solid #1e293b", borderRadius: "6px", padding: "0.6rem 0.85rem" }}>
@@ -2409,7 +2413,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   Ver Email
                 </button>
 
-                {!isOperator && detailTarget.access_plan !== "lifetime" && (<button
+                {!isOperator && !["lifetime", "skool"].includes(detailTarget.access_plan) && (<button
                   onClick={() => {
                     setRenewTarget(detailTarget);
                     setRenewPlan(detailTarget.access_plan === "annual" ? "annual" : "monthly");
