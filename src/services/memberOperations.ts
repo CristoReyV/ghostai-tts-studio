@@ -9,7 +9,7 @@ export function matchesMemberFilters(member: AdminMember, filters: { search: str
   const search = filters.search.trim().toLocaleLowerCase();
   return (!search || member.name.toLocaleLowerCase().includes(search) || member.email.toLocaleLowerCase().includes(search))
     && (filters.plan === "all" || member.access_plan === filters.plan)
-    && (filters.status === "all" || member.status === filters.status)
+    && (filters.status === "all" || (filters.status === "current" ? ["pending", "invited", "active"].includes(member.status) && !member.revoked_at && !member.skool_removed_at : member.status === filters.status))
     && (!filters.needsAction || getMemberOperationalState(member).needsAction);
 }
 

@@ -139,7 +139,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   // Member search & filters
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [planFilter, setPlanFilter] = useState<"all" | "monthly" | "annual" | "lifetime" | "skool">("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "invited" | "active" | "expired" | "revoked">("all");
+  const [statusFilter, setStatusFilter] = useState<"current" | "all" | "pending" | "invited" | "active" | "expired" | "revoked">("current");
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
 
   // Bulk Importer Modal State
@@ -688,6 +688,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
   };
 
   // Filtered members list
+  const currentMemberCount = members.filter(m => matchesMemberFilters(m, { search: "", plan: "all", status: "current", needsAction: false })).length;
+  const revokedMemberCount = members.filter(m => m.status === "revoked").length;
   const actionCount = members.filter(m => getMemberOperationalState(m).needsAction).length;
   const filteredMembers = members.filter(m => matchesMemberFilters(m, { search: searchQuery, plan: planFilter, status: statusFilter, needsAction: needsActionFilter }));
 
@@ -911,7 +913,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
             onClick={() => setActiveTab("members")}
             style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "members" ? "2px solid #38bdf8" : "2px solid transparent", color: activeTab === "members" ? "#38bdf8" : "#94a3b8", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}
           >
-            <Users size={16} /> MIEMBROS ({members.length})
+            <Users size={16} /> MIEMBROS ({currentMemberCount})
           </button>
 
           {(isOwner || isOperator) && <button onClick={() => setActiveTab("billing")} style={{ display: "flex", alignItems: "center", padding: "0.6rem 1.25rem", border: "none", background: "none", borderBottom: activeTab === "billing" ? "2px solid #73dcd6" : "2px solid transparent", color: activeTab === "billing" ? "#9af5df" : "#94a3b8", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}>FACTURACIÓN</button>}
@@ -969,6 +971,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
           <div>
             {(isOwner || isOperator) && <div className="billing"><SheetSyncControl isOwner={isOwner} sync={lastSheetSync} onSynced={refreshAfterSheetSync}/></div>}
             {(isOwner || isOperator) && <div className="billing"><SkoolSyncControl isOwner={isOwner} onSynced={refreshAfterSheetSync}/></div>}
+            <p style={{ color: "#a7b6cd", fontSize: ".85rem" }}>{currentMemberCount} con acceso o pendientes de activación · {revokedMemberCount} revocados · {members.length} registros en historial</p>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
               <button aria-pressed={needsActionFilter} onClick={() => setNeedsActionFilter(true)} style={{ color: "#fcd34d", background: needsActionFilter ? "#422006" : "#1e293b", border: "1px solid #a16207", borderRadius: "7px", padding: "0.65rem", fontWeight: 750, cursor: "pointer" }}>NECESITAN ACCIÓN: {actionCount}</button>
               {needsActionFilter && <><span style={{ color: "#fcd34d", fontSize: "0.8rem" }}>Filtro NECESITA ACCIÓN activo</span><button onClick={() => setNeedsActionFilter(false)} style={{ color: "#cbd5e1", background: "#1e293b", border: "1px solid #475569", padding: "0.5rem", borderRadius: "6px", cursor: "pointer" }}>Mostrar todos</button></>}
@@ -1004,7 +1007,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToStudio }
                   onChange={(e) => setStatusFilter(e.target.value as any)}
                   style={{ padding: "0.5rem 0.75rem", background: "#0f172a", border: "1px solid #1e293b", borderRadius: "6px", color: "#f8fafc", fontSize: "0.85rem" }}
                 >
-                  <option value="all">Todos los estados</option>
+                  <option value="current">Con acceso o por activar</option>
+                  <option value="all">Todos los estados (incluye historial)</option>
                   <option value="pending">PENDING</option>
                   <option value="invited">INVITED</option>
                   <option value="active">ACTIVE</option>

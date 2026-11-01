@@ -10,7 +10,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("SKOOL access", () => {
   it("explains separate accounts, scoped removals and no email sending in preview", () => {
     const html = renderToStaticMarkup(<SkoolSyncPreview preview={preview} busy={false} progress="" onApply={() => {}} onCancel={() => {}} />);
-    expect(html).toContain("58 nuevos"); expect(html).toContain("Eric Mena - 2"); expect(html).toContain("únicamente accesos SKOOL"); expect(html).toContain("No se envían correos");
+    expect(html).toContain("58 nuevos"); expect(html).toContain("Eric Mena - 2"); expect(html).toContain("incluidos los planes anteriores"); expect(html).toContain("No se envían correos");
     expect(html).not.toContain("gai_live_"); expect(html).toContain("Aplicar sincronización SKOOL");
   });
   it("blocks apply on malformed source and disables cancel during a running batch", () => {

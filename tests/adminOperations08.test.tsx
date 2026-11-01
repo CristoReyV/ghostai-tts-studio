@@ -11,6 +11,15 @@ const member = (overrides: Partial<AdminMember> = {}): AdminMember => ({
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("admin operations 08", () => {
+  it("keeps revoked and expired history out of the current access view", () => {
+    const current = { search: "", plan: "all", status: "current", needsAction: false };
+    for (const status of ["pending", "invited", "active"] as const) expect(matchesMemberFilters(member({ status }), current)).toBe(true);
+    for (const status of ["revoked", "expired"] as const) expect(matchesMemberFilters(member({ status }), current)).toBe(false);
+    expect(matchesMemberFilters(member({ revoked_at: "2026-10-31" }), current)).toBe(false);
+    expect(matchesMemberFilters(member({ skool_removed_at: "2026-10-31" }), current)).toBe(false);
+    expect(matchesMemberFilters(member({ status: "revoked" }), { ...current, status: "revoked" })).toBe(true);
+    expect(matchesMemberFilters(member({ status: "revoked" }), { ...current, status: "all" })).toBe(true);
+  });
   it("composes needs action with search, plan and technical status", () => {
     const filters = { search: "ELENA", plan: "monthly", status: "pending", needsAction: true };
     expect(matchesMemberFilters(member(), filters)).toBe(true);
