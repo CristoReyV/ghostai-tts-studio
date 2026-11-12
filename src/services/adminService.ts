@@ -475,9 +475,10 @@ export interface ActivationResponse {
  */
 export async function fetchAdminMembers(): Promise<AdminMember[]> {
   const baseUrl = getGatewayBaseUrl();
-  const res = await fetch(`${baseUrl}/api/admin/members`, {
+  const res = await fetch(`${baseUrl}/api/admin/members?_=${Date.now()}`, {
     method: "GET",
     credentials: "include",
+    cache: "no-store",
   });
 
   if (!res.ok) {
