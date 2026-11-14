@@ -12,6 +12,7 @@ export interface VoiceProviderSectionProps {
   isProviderConnected: boolean;
   onConnect: (apiKey: string) => Promise<{ ok: boolean; message?: string }>;
   onDisconnect: () => Promise<void>;
+  onChangeKey?: () => void;
   isAuthenticated: boolean;
   providerTier?: string | null;
 }
@@ -20,6 +21,7 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
   isProviderConnected,
   onConnect,
   onDisconnect,
+  onChangeKey,
   isAuthenticated,
   providerTier,
 }) => {
@@ -115,6 +117,18 @@ export const VoiceProviderSection: React.FC<VoiceProviderSectionProps> = ({
                 Tu cuenta está lista para generar narraciones.
               </p>
             </div>
+            {onChangeKey && (
+              <button
+                type="button"
+                className="btn-provider-disconnect"
+                data-testid="provider-change-key"
+                onClick={onChangeKey}
+                disabled={isSubmitting}
+                style={{ marginRight: "0.5rem" }}
+              >
+                <span>CAMBIAR CLAVE</span>
+              </button>
+            )}
             <button
               type="button"
               className="btn-provider-disconnect"

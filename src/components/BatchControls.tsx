@@ -109,6 +109,7 @@ export interface BatchControlsProps {
   voicesError?: string | null;
   onRetryVoices?: () => void;
   onConnectProvider?: (apiKey: string) => Promise<{ ok: boolean; message?: string }>;
+  onChangeProviderKey?: () => void;
   onDisconnectProvider?: () => Promise<void>;
   isEmbedded?: boolean;
   onOpenTopLevel?: () => void;
@@ -184,6 +185,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   voicesError = null,
   onRetryVoices,
   onConnectProvider,
+  onChangeProviderKey,
   onDisconnectProvider,
   initialLibraryVoices,
   initialLibraryExpanded = false,
@@ -1347,6 +1349,7 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                   isProviderConnected={isProviderConnected}
                   onConnect={onConnectProvider}
                   onDisconnect={onDisconnectProvider}
+                  onChangeKey={onChangeProviderKey}
                   isAuthenticated={isAuthenticated}
                   providerTier={providerTier}
                 />

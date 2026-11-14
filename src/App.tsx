@@ -55,6 +55,7 @@ import {
 import { Header } from "./components/Header";
 import { ConnectionAlert } from "./components/ConnectionAlert";
 import { VoiceProviderSection } from "./components/VoiceProviderSection";
+import { ElevenLabsConnectModal } from "./components/ElevenLabsConnectModal";
 import { ProjectImporter } from "./components/ProjectImporter";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { BatchControls } from "./components/BatchControls";
@@ -379,20 +380,11 @@ const StudioApp: React.FC = () => {
     }
   }, []);
 
-  const handleFocusElevenLabs = useCallback(() => {
-    const input =
-      (document.getElementById("elevenlabs-api-key-input") as HTMLInputElement | null) ||
-      (document.querySelector(".provider-key-input") as HTMLInputElement | null);
-    if (input) {
-      input.scrollIntoView({ behavior: "smooth", block: "center" });
-      setTimeout(() => input.focus(), 300);
-    } else {
-      const section =
-        document.getElementById("voice-provider-section") ||
-        document.querySelector(".voice-provider-card");
-      section?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, []);
+  // El formulario inline vive dentro de «Configuración» (colapsada) cuando hay proyecto, por lo que
+  // buscarlo en el DOM fallaba en silencio. El botón abre ahora un modal propio, siempre disponible.
+  const [isElevenLabsModalOpen, setIsElevenLabsModalOpen] = useState(false);
+  const handleFocusElevenLabs = useCallback(() => setIsElevenLabsModalOpen(true), []);
+  const handleCloseElevenLabsModal = useCallback(() => setIsElevenLabsModalOpen(false), []);
 
 
   // Check BYOK ElevenLabs connection status whenever authentication changes
@@ -422,19 +414,15 @@ const StudioApp: React.FC = () => {
     };
   }, [isAuthenticated]);
 
+  // Los errores se propagan (sin capturar) para conservar code/statusCode: clave inválida vs. red vs. servicio.
   const handleConnectProvider = async (apiKey: string): Promise<{ ok: boolean; message?: string }> => {
-    try {
-      const res = await connectElevenLabs(apiKey);
-      if (res.ok) {
-        setIsProviderConnected(true);
-        showNotification("success", "ElevenLabs conectado correctamente.");
-        return { ok: true };
-      }
-      return { ok: false, message: res.message || "Error al conectar ElevenLabs." };
-    } catch (err) {
-      const msg = (err as Error).message || "Error al conectar ElevenLabs.";
-      return { ok: false, message: msg };
+    const res = await connectElevenLabs(apiKey);
+    if (res.ok) {
+      setIsProviderConnected(true);
+      showNotification("success", "ElevenLabs conectado correctamente.");
+      return { ok: true };
     }
+    return { ok: false, message: res.message || "Error al conectar ElevenLabs." };
   };
 
   const handleDisconnectProvider = async (): Promise<void> => {
@@ -1209,6 +1197,15 @@ const StudioApp: React.FC = () => {
         onConnectElevenLabsClick={handleFocusElevenLabs}
       />
 
+      <ElevenLabsConnectModal
+        isOpen={isElevenLabsModalOpen}
+        isAuthenticated={isAuthenticated}
+        isProviderConnected={isProviderConnected}
+        onClose={handleCloseElevenLabsModal}
+        onConnect={handleConnectProvider}
+        onDisconnect={handleDisconnectProvider}
+      />
+
       {/* Main Content Area */}
       <main className="app-main">
         {/* Importer Section */}
@@ -1227,6 +1224,7 @@ const StudioApp: React.FC = () => {
               isProviderConnected={isProviderConnected}
               onConnect={handleConnectProvider}
               onDisconnect={handleDisconnectProvider}
+              onChangeKey={handleFocusElevenLabs}
               isAuthenticated={isAuthenticated}
               providerTier={providerTier}
             />
@@ -1294,6 +1292,7 @@ const StudioApp: React.FC = () => {
                 onRetryVoices={loadGatewayData}
                 onConnectProvider={handleConnectProvider}
                 onDisconnectProvider={handleDisconnectProvider}
+                onChangeProviderKey={handleFocusElevenLabs}
                 isEmbedded={isEmbedded}
                 onOpenTopLevel={handleOpenTopLevel}
               >
