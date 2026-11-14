@@ -196,25 +196,83 @@ export async function checkGatewayHealth(signal?: AbortSignal): Promise<GatewayH
   }
 }
 
-/**
- * Fetches available voices from the Gateway.
- */
-export async function fetchGatewayVoices(signal?: AbortSignal): Promise<GatewayVoice[]> {
-  const base = getGatewayBaseUrl();
-  const url = `${base}/api/tts/voices`;
+export interface GatewayVoicesPage {
+  voices: GatewayVoice[];
+  hasMore: boolean;
+  nextPageToken: string | null;
+}
 
-  const res = await fetch(url, { method: "GET", signal });
+/**
+ * Fetches ONE page of the account's voices (GET /api/tts/voices → ElevenLabs GET /v2/voices).
+ * Requiere acceso GhostAI + sesión BYOK (cookie); la API key nunca viaja desde el navegador en esta llamada.
+ * Solo pide la página indicada: el resto se carga bajo demanda con nextPageToken.
+ */
+export async function fetchGatewayVoicesPage(
+  options: { pageToken?: string | null; pageSize?: number; signal?: AbortSignal } = {}
+): Promise<GatewayVoicesPage> {
+  const token = getGatewayAuthToken();
+  if (!token || !token.trim()) {
+    throw new TtsGatewayError("Se requiere acceso GhostAI para consultar las voces.", "AUTH_REQUIRED", 401);
+  }
+
+  const query = new URLSearchParams();
+  if (options.pageSize) query.set("page_size", String(options.pageSize));
+  if (options.pageToken) query.set("page_token", options.pageToken);
+  const qs = query.toString();
+  const url = `${getGatewayBaseUrl()}/api/tts/voices${qs ? `?${qs}` : ""}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token.trim()}` },
+      credentials: "include",
+      signal: options.signal,
+    });
+  } catch (err) {
+    if ((err as Error)?.name === "AbortError") throw err;
+    throw new TtsGatewayError("No se pudo contactar el servicio de voces.", "NETWORK_ERROR", 0);
+  }
+
   if (!res.ok) {
     let errMsg = `Error ${res.status} al obtener voces`;
+    let errCode = "FETCH_VOICES_FAILED";
+    let requestId: string | undefined = res.headers?.get?.("X-TTS-Request-ID") || undefined;
     try {
       const errBody = await res.json();
       if (errBody?.error?.message) errMsg = errBody.error.message;
+      if (errBody?.error?.code) errCode = errBody.error.code;
+      if (errBody?.requestId) requestId = errBody.requestId;
     } catch (_) {}
-    throw new TtsGatewayError(errMsg, "FETCH_VOICES_FAILED", res.status);
+    if (res.status === 401 && (errCode === "AUTH_REQUIRED" || errCode === "AUTH_INVALID")) {
+      clearGatewayAuthToken();
+    }
+    throw new TtsGatewayError(errMsg, errCode, res.status, requestId);
   }
 
-  const data = await res.json();
-  return (data.voices || []) as GatewayVoice[];
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch (_) {
+    throw new TtsGatewayError("Respuesta de voces ilegible.", "INVALID_RESPONSE", res.status);
+  }
+  const body = data as { voices?: unknown; hasMore?: unknown; nextPageToken?: unknown } | null;
+  if (!body || !Array.isArray(body.voices)) {
+    throw new TtsGatewayError("Respuesta de voces con formato inesperado.", "INVALID_RESPONSE", res.status);
+  }
+  const nextPageToken = typeof body.nextPageToken === "string" && body.nextPageToken ? body.nextPageToken : null;
+  return {
+    voices: body.voices as GatewayVoice[],
+    hasMore: Boolean(body.hasMore) && nextPageToken !== null,
+    nextPageToken,
+  };
+}
+
+/**
+ * Fetches the first page of available voices from the Gateway (compat helper).
+ */
+export async function fetchGatewayVoices(signal?: AbortSignal): Promise<GatewayVoice[]> {
+  return (await fetchGatewayVoicesPage({ signal })).voices;
 }
 
 /**

@@ -80,6 +80,7 @@ export interface GatewayVoice {
   labels: Record<string, string>;
   description?: string | null;
   previewUrl: string | null;
+  verifiedLanguages?: { language: string | null; locale: string | null; accent: string | null; previewUrl: string | null }[];
   availableForTiers?: string[] | null;
   isOwner?: boolean | null;
   voiceOrigin?: VoiceOrigin;

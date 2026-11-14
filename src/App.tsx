@@ -18,7 +18,7 @@ import type {
 import {
   checkGatewayHealth,
   fetchGatewayModels,
-  fetchGatewayVoices,
+  fetchGatewayVoicesPage,
   generateNarrationAudio,
   alignExistingAudio,
   getGatewayAuthToken,
@@ -54,6 +54,7 @@ import {
 } from "./services/voiceLibrary";
 import { Header } from "./components/Header";
 import { ConnectionAlert } from "./components/ConnectionAlert";
+import { describeVoicesError, type VoicesErrorInfo } from "./services/voicesDiagnostics";
 import { VoiceProviderSection } from "./components/VoiceProviderSection";
 import { ElevenLabsConnectModal } from "./components/ElevenLabsConnectModal";
 import { ProjectImporter } from "./components/ProjectImporter";
@@ -77,6 +78,9 @@ const StudioApp: React.FC = () => {
   const [providerTier, setProviderTier] = useState<string | null>(null);
   const [isLoadingVoices, setIsLoadingVoices] = useState<boolean>(true);
   const [voicesError, setVoicesError] = useState<string | null>(null);
+  const [voicesErrorInfo, setVoicesErrorInfo] = useState<VoicesErrorInfo | null>(null);
+  const [voicesNextToken, setVoicesNextToken] = useState<string | null>(null);
+  const [isLoadingMoreVoices, setIsLoadingMoreVoices] = useState<boolean>(false);
 
   // Gateway states
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealth | null>(null);
@@ -163,28 +167,16 @@ const StudioApp: React.FC = () => {
     setCheckingHealth(true);
     setIsLoadingVoices(true);
     setVoicesError(null);
+    setVoicesErrorInfo(null);
+
+    // 1) Salud del gateway. Si cae, no hay catálogo, pero se informa como fallo del servicio de voces.
     try {
       const health = await checkGatewayHealth();
       setGatewayHealth(health);
-
-      const [loadedVoices, loadedModels] = await Promise.all([
-        fetchGatewayVoices(),
-        fetchGatewayModels().catch(() => []),
-      ]);
-
-      setVoices(loadedVoices);
-      setModels(loadedModels);
-
-      // Pick default voice if not set based on active language (Spanish preferred)
-      if (loadedVoices.length > 0 && !selectedVoiceId) {
-        const langVoice = loadedVoices.find(
-          (v) => (v.labels?.language || "").toLowerCase() === selectedLanguage.toLowerCase()
-        );
-        setSelectedVoiceId(langVoice ? langVoice.voiceId : loadedVoices[0].voiceId);
-      }
     } catch (err) {
-      console.warn("Error conectando al Gateway:", err);
-      setVoicesError("No pudimos comprobar tus voces con ElevenLabs.");
+      const info = describeVoicesError(err);
+      setVoicesError(info.message);
+      setVoicesErrorInfo(info);
       setGatewayHealth({
         ok: false,
         service: "ghostai-tts-gateway",
@@ -192,11 +184,65 @@ const StudioApp: React.FC = () => {
         provider: "elevenlabs",
         configured: false,
       });
+      setCheckingHealth(false);
+      setIsLoadingVoices(false);
+      return;
+    }
+
+    fetchGatewayModels()
+      .then((loadedModels) => setModels(loadedModels))
+      .catch(() => setModels([]));
+
+    // 2) Catálogo de la cuenta: requiere acceso GhostAI y ElevenLabs conectado (BYOK).
+    //    Un fallo aquí NUNCA cambia el estado de la conexión (isProviderConnected).
+    if (!isAuthenticated || !isProviderConnected) {
+      setVoices([]);
+      setVoicesNextToken(null);
+      setCheckingHealth(false);
+      setIsLoadingVoices(false);
+      return;
+    }
+
+    try {
+      const page = await fetchGatewayVoicesPage({ pageSize: 100 });
+      setVoices(page.voices);
+      setVoicesNextToken(page.hasMore ? page.nextPageToken : null);
+
+      // Pick default voice if not set based on active language (Spanish preferred)
+      if (page.voices.length > 0 && !selectedVoiceId) {
+        const langVoice = page.voices.find(
+          (v) => (v.labels?.language || "").toLowerCase() === selectedLanguage.toLowerCase()
+        );
+        setSelectedVoiceId(langVoice ? langVoice.voiceId : page.voices[0].voiceId);
+      }
+    } catch (err) {
+      const info = describeVoicesError(err);
+      setVoicesError(info.message);
+      setVoicesErrorInfo(info);
     } finally {
       setCheckingHealth(false);
       setIsLoadingVoices(false);
     }
-  }, [selectedVoiceId, selectedLanguage]);
+  }, [selectedVoiceId, selectedLanguage, isAuthenticated, isProviderConnected]);
+
+  // Carga la siguiente página bajo demanda (no pide todas las páginas por adelantado).
+  const loadMoreVoices = useCallback(async () => {
+    if (!voicesNextToken || isLoadingMoreVoices) return;
+    setIsLoadingMoreVoices(true);
+    try {
+      const page = await fetchGatewayVoicesPage({ pageToken: voicesNextToken, pageSize: 100 });
+      setVoices((prev) => {
+        const seen = new Set(prev.map((v) => v.voiceId));
+        return [...prev, ...page.voices.filter((v) => !seen.has(v.voiceId))];
+      });
+      setVoicesNextToken(page.hasMore ? page.nextPageToken : null);
+    } catch (err) {
+      const info = describeVoicesError(err);
+      showToast({ type: "error", message: info.message }, 6000);
+    } finally {
+      setIsLoadingMoreVoices(false);
+    }
+  }, [voicesNextToken, isLoadingMoreVoices, showToast]);
 
   // When a shared voice is added from Voice Library, append to account collection
   const handleVoiceAdded = useCallback((newVoice: GatewayVoice) => {
@@ -1289,7 +1335,11 @@ const StudioApp: React.FC = () => {
                 providerTier={providerTier}
                 isLoadingVoices={isLoadingVoices}
                 voicesError={voicesError}
+                voicesErrorInfo={voicesErrorInfo}
                 onRetryVoices={loadGatewayData}
+                hasMoreVoices={Boolean(voicesNextToken)}
+                isLoadingMoreVoices={isLoadingMoreVoices}
+                onLoadMoreVoices={loadMoreVoices}
                 onConnectProvider={handleConnectProvider}
                 onDisconnectProvider={handleDisconnectProvider}
                 onChangeProviderKey={handleFocusElevenLabs}

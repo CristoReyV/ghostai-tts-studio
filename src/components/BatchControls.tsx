@@ -48,6 +48,7 @@ import {
   addSharedVoiceToAccount,
 } from "../services/gateway";
 import { VoiceProviderSection } from "./VoiceProviderSection";
+import type { VoicesErrorInfo } from "../services/voicesDiagnostics";
 import {
   OFFICIAL_LANGUAGES,
   USE_CASE_OPTIONS,
@@ -107,7 +108,12 @@ export interface BatchControlsProps {
   providerTier?: string | null;
   isLoadingVoices?: boolean;
   voicesError?: string | null;
+  /** Diagnóstico clasificado y sanitizado del fallo del catálogo (sin API key). */
+  voicesErrorInfo?: VoicesErrorInfo | null;
   onRetryVoices?: () => void;
+  hasMoreVoices?: boolean;
+  isLoadingMoreVoices?: boolean;
+  onLoadMoreVoices?: () => void;
   onConnectProvider?: (apiKey: string) => Promise<{ ok: boolean; message?: string }>;
   onChangeProviderKey?: () => void;
   onDisconnectProvider?: () => Promise<void>;
@@ -183,7 +189,11 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
   providerTier,
   isLoadingVoices = false,
   voicesError = null,
+  voicesErrorInfo = null,
   onRetryVoices,
+  hasMoreVoices = false,
+  isLoadingMoreVoices = false,
+  onLoadMoreVoices,
   onConnectProvider,
   onChangeProviderKey,
   onDisconnectProvider,
@@ -1032,19 +1042,32 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
 
         {/* Error State for Section A */}
         {voicesError ? (
-          <div className="usable-error-card" data-testid="usable-voices-error">
+          <div className="usable-error-card" data-testid="usable-voices-error" data-error-kind={voicesErrorInfo?.kind || "unknown"}>
             <AlertCircle size={22} className="text-rose mr-3 flex-shrink-0" />
             <div>
-              <h4>NO PUDIMOS COMPROBAR TUS VOCES</h4>
-              <p>Tu conexión con ElevenLabs sigue activa. Intenta actualizar el catálogo.</p>
+              <h4>{voicesErrorInfo?.title || "NO PUDIMOS COMPROBAR TUS VOCES"}</h4>
+              <p>{voicesErrorInfo?.message || "Tu conexión con ElevenLabs sigue activa. Intenta actualizar el catálogo."}</p>
+              <p className="text-dim" style={{ fontSize: "0.72rem", marginTop: "0.25rem" }}>
+                Cuenta conectada · catálogo no disponible por ahora.
+              </p>
+              {voicesErrorInfo?.diagnostic && (
+                <details style={{ marginTop: "0.4rem" }}>
+                  <summary style={{ cursor: "pointer", fontSize: "0.72rem" }}>Diagnóstico técnico</summary>
+                  <code data-testid="usable-voices-diagnostic" style={{ fontSize: "0.7rem", wordBreak: "break-all" }}>
+                    {voicesErrorInfo.diagnostic}
+                  </code>
+                </details>
+              )}
             </div>
             {onRetryVoices && (
               <button
                 type="button"
                 className="btn-retry-catalog"
                 onClick={onRetryVoices}
+                disabled={isLoadingVoices}
               >
-                <RotateCcw size={14} className="mr-1" /> Reintentar
+                {isLoadingVoices ? <Loader2 size={14} className="mr-1 animate-spin" /> : <RotateCcw size={14} className="mr-1" />}
+                {isLoadingVoices ? "Reintentando…" : "Reintentar"}
               </button>
             )}
           </div>
@@ -1094,6 +1117,9 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                           </h4>
                           <span className="usable-card-desc">
                             {formatVoiceSubtitle(voice)}
+                          </span>
+                          <span className="usable-card-desc" data-testid="usable-card-voice-id" style={{ fontSize: "0.68rem", opacity: 0.7 }}>
+                            ID: {voice.voiceId}
                           </span>
                         </div>
                       </div>
@@ -1174,6 +1200,21 @@ export const BatchControls: React.FC<BatchControlsProps> = ({
                       <ChevronDown size={15} className="mr-1" /> VER TODAS LAS VOCES DISPONIBLES ({filteredUsableVoices.length})
                     </>
                   )}
+                </button>
+              </div>
+            )}
+
+            {hasMoreVoices && onLoadMoreVoices && (
+              <div className="usable-expand-row">
+                <button
+                  type="button"
+                  className="btn-toggle-expand-usable"
+                  onClick={onLoadMoreVoices}
+                  disabled={isLoadingMoreVoices}
+                  data-testid="btn-load-more-voices"
+                >
+                  {isLoadingMoreVoices ? <Loader2 size={15} className="mr-1 animate-spin" /> : <ChevronDown size={15} className="mr-1" />}
+                  {isLoadingMoreVoices ? "CARGANDO…" : "CARGAR MÁS VOCES"}
                 </button>
               </div>
             )}
